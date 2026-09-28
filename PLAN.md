@@ -690,7 +690,7 @@ account. These are normative:
 | Delay between UI actions (clicks, fills) | random **2–5 s** (`human_delay()` in `browser.py`) |
 | Status poll interval | **≥ 20 s** (stated in `get_scan_status` description) |
 | Scans in flight | **1** — never parallelize scans |
-| Scan operations per calendar day (starts + deletes) | **≤ 12** (enforced server-side from the ledger, local day: each SCAN RESUME submission + each deletion; reuse is free → `limit_reached`; amendment 2026-09-28) |
+| Scan operations per calendar day (starts + deletes) | **≤ 12** (enforced server-side from the ledger, local day: an attempt entry is written durably before each SCAN RESUME and each DELETE click, so failures after the click still count; reuse is free → `limit_reached`; amendment 2026-09-28) |
 | Operating window | daytime in the user's timezone; no 24/7 unattended marathons |
 | Browser fingerprint | real Chrome channel, persistent profile — improves plausibility; **not a guarantee of undetectability** |
 | Scope discipline | only the scan/JD/feedback flows in §9; never touch admin, billing, or other users' data |
@@ -719,8 +719,10 @@ accounts, or exceeding what the site's own UI permits a human to do.
 
 Retry policy: at most **2 retries** per failing call, with the 2–5 s human delay between them.
 *Amendment 2026-09-28 (Phase 6):* the server itself retries `network_error` up to twice (2–5 s apart) for the
-read-only tools (`auth_status`, `list_scans`, `get_scan_status`, `get_scan_feedback`) before returning it;
-`start_scan`/`delete_scan` are never auto-retried (a retry could double-submit or double-delete).
+read-only tools (`auth_status`, `list_scans`, `get_scan_status`, `get_scan_feedback`) before returning it,
+then returns a "stop and report — already retried" hint; `start_scan`/`delete_scan` are never auto-retried (a
+retry could double-submit or double-delete) and a `network_error` from them carries a "reconcile before any
+retry" hint.
 `auth_expired`, `site_changed`, `unknown_state`, `profile_in_use`, and `internal_error` are never retried blindly.
 
 ---
@@ -739,8 +741,8 @@ iterations and because scans may be tidied up.
   on demand; these are the fixtures for parser tests.
 - **Permissions & retention (explicit — a `.gitignore` entry cannot protect files outside the
   repo):** `~/.resumeai-mcp/` and `PROFILE_DIR` are created with `0700`; snapshots contain full
-  page HTML (PII) and are purged after **30 days** (by mtime, every time a snapshot is saved; amendment
-  2026-09-28); ledger + feedback backups are tiny and retained
+  page HTML (PII) and are purged after **30 days** (by mtime, at every server start and every time a
+  snapshot is saved; amendment 2026-09-28); ledger + feedback backups are tiny and retained
   indefinitely. Never log page HTML bodies or file contents at INFO level.
 - **Ledger read-back:** on startup, `storage.py` loads the ledger so `start_scan` idempotency works
   even for scans created in previous sessions.

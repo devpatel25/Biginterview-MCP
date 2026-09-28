@@ -93,7 +93,7 @@ text-based PDF/DOCX (not a scanned image), 5 MB max.
 | `invalid_input` "still in flight" | a scan is running | poll `get_scan_status` until it completes |
 | `unknown_state` | a submission couldn't be confirmed, or a status couldn't be read | **don't rescan**; follow the hint (the next `start_scan` recovers pending submissions) |
 | `site_changed` | the website's layout changed | see §7 |
-| `network_error` | portal unreachable | read tools already retried twice; check your connection |
+| `network_error` | portal unreachable | read tools already retried twice: check your connection; after a scan/delete, check My Scans before retrying |
 | `storage_error` | `DATA_DIR` not writable / disk full | fix permissions/space; nothing is deleted without a backup |
 | `claude mcp get resumeai` not connected | wrong path or venv | re-run §2 and the `claude mcp add` line with the absolute repo path |
 
@@ -116,7 +116,7 @@ the page to `~/.resumeai-mcp/snapshots/<step>-<time>-<random>.html`. To fix:
 
 Everything stays on your machine under `DATA_DIR` (`0700`): `ledger.jsonl` (the scans this server created, with
 file hashes, never resume text), `feedback/<scan_id>.json` backups (kept), and `snapshots/` (full page HTML,
-which is personal data: deleted automatically after 30 days). `PROFILE_DIR` holds your session cookies: treat
+which is personal data: deleted automatically after 30 days, checked at every server start and every new snapshot). `PROFILE_DIR` holds your session cookies: treat
 it like a password; never copy, share or commit it.
 
 ## 9. Development

@@ -18,6 +18,7 @@ from . import auth, feedback, scans
 from .browser import close_context, human_delay
 from .config import load_settings
 from .schemas import ToolError
+from .storage import purge_old_snapshots
 
 log = logging.getLogger("resumeai_mcp")
 
@@ -26,8 +27,13 @@ HONESTY = ("Honesty rule: unmatched keywords are verification candidates, not a 
            "metrics, dates, degrees, or employment. A truthful Silver beats a fabricated Gold.")
 PACING = ("Pacing: the server adds random 2-5 s human-like delays between UI actions and runs one tool at a time; "
           "never call tools in parallel.")
-ERRORS = ("On ok=false follow error.hint (PLAN.md §13): auth_expired, site_changed, unknown_state, internal_error and "
-          "profile_in_use are never retried blindly; otherwise retry at most twice.")
+ERRORS = ("On ok=false follow error.hint (PLAN.md §13). Never retry auth_expired, site_changed, unknown_state, "
+          "internal_error or profile_in_use blindly. Read tools already retry network_error twice themselves, and "
+          "start_scan/delete_scan must be reconciled (get_scan_status / list_scans) before any retry; otherwise "
+          "retry at most twice.")
+READ_EXHAUSTED_HINT = "Stop and report: the server already retried this read twice (PLAN.md §13). Do not retry."
+WRITE_NETWORK_HINT = ("Stop; do not retry blindly — the operation may have reached the site. Reconcile first with "
+                      "list_scans / get_scan_status (a start_scan retry is deduplicated by the reuse key and recovery).")
 
 
 READ_RETRIES = 2  # §13 retry policy: at most 2 retries, 2–5 s apart
@@ -47,7 +53,10 @@ async def envelope(call, retry_network: bool = False) -> dict:
             if e.code == "network_error" and attempt + 1 < attempts:
                 await human_delay(settings)
                 continue
-            return {"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}
+            hint = e.hint
+            if e.code == "network_error":  # the generic "retry 2x" would multiply retries or repeat a write
+                hint = READ_EXHAUSTED_HINT if retry_network else WRITE_NETWORK_HINT
+            return {"ok": False, "error": {"code": e.code, "message": e.message, "hint": hint}}
         except Exception as e:  # §7.0: no bare exceptions reach the agent
             log.exception("unexpected failure in tool call")
             return {"ok": False, "error": {"code": "internal_error",
@@ -72,6 +81,7 @@ class ArgumentErrorsAsEnvelope(Middleware):
 
 @asynccontextmanager
 async def lifespan(app):
+    purge_old_snapshots(settings)  # §14 retention also runs at every server start, not only on the next save
     try:
         yield
     finally:

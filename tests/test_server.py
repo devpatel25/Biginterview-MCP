@@ -151,3 +151,36 @@ def test_write_tools_never_auto_retry(monkeypatch):
     monkeypatch.setattr(scans, "start_scan", down)
     body = _call("start_scan", {"resume_path": "/r.pdf", "job_title": "T", "company": "C", "job_description": "J"})
     assert body["error"]["code"] == "network_error" and len(calls) == 1  # a retry could double-submit
+
+
+def test_network_error_hints_stop_instead_of_multiplying_retries(monkeypatch):
+    async def down(*a, **kw):
+        raise ToolError("network_error", "down", "Retry up to 2x with the 2-5 s delay; if it persists, stop and report.")
+
+    async def no_delay(settings):
+        pass
+
+    monkeypatch.setattr(server, "human_delay", no_delay)
+    monkeypatch.setattr(scans, "get_scan_status", down)
+    monkeypatch.setattr(scans, "delete_scan", down)
+    read = _call("get_scan_status", {"scan_id": "1"})["error"]["hint"]
+    write = _call("delete_scan", {"scan_id": "1", "confirm": True})["error"]["hint"]
+    assert read == server.READ_EXHAUSTED_HINT and "Do not retry" in read
+    assert write == server.WRITE_NETWORK_HINT and "Reconcile" in write
+
+
+def test_server_start_purges_old_snapshots(monkeypatch):
+    purged = []
+    monkeypatch.setattr(server, "purge_old_snapshots", lambda settings: purged.append(True))
+
+    async def no_close():
+        pass
+
+    monkeypatch.setattr(server, "close_context", no_close)
+
+    async def go():
+        async with server.lifespan(server.mcp):
+            pass
+
+    asyncio.run(go())
+    assert purged

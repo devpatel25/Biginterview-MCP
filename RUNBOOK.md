@@ -87,7 +87,7 @@ file hash, so a fresh scan) and the next iteration polls it normally.
 | `invalid_input` | Fix the input named in the message; retry once. (A scan already in flight also lands here: poll it.) |
 | `storage_error` | STOP. Local ledger/backup failed; never delete scans until fixed. |
 | `profile_in_use` | STOP. Ask the user to close `scripts/login.py` / the other browser, then retry. |
-| `network_error` | Retry up to 2× with a 2–5 s pause, then STOP and report. |
+| `network_error` | Read tools (auth_status, list_scans, get_scan_status, get_scan_feedback) were already retried twice by the server: STOP and report. After start_scan/delete_scan: STOP; reconcile with list_scans / get_scan_status before any retry (the write may have happened). |
 | `internal_error` | STOP and report; details are in the MCP server log. |
 
 Never retry the same failing call more than twice; never retry `auth_expired`, `site_changed`,

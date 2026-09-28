@@ -275,14 +275,14 @@ def find_new_row(rows: list[dict], basename: str, title: str, since: datetime,
 
 
 def ops_today(ledger: dict, today=None) -> int:
-    """§12 budget count: scan submissions (attempt entries, one per SCAN RESUME click) + deletions, local day."""
+    """§12 budget count for the local day: attempt entries, which are written durably *before* each SCAN RESUME
+    or DELETE click — so an operation counts even if everything after the click fails."""
     today = today or datetime.now().astimezone().date()
 
     def on_today(value) -> bool:
         ts = _utc(value)
         return bool(ts) and ts.astimezone().date() == today
-    return (sum(1 for k, e in ledger.items() if k.startswith("attempt:") and on_today(e.get("started_at")))
-            + sum(1 for e in ledger.values() if e.get("scan_id") and on_today(e.get("deleted_at"))))
+    return sum(1 for k, e in ledger.items() if k.startswith("attempt:") and on_today(e.get("started_at")))
 
 
 def check_budget(ledger: dict) -> None:
@@ -378,7 +378,8 @@ def _recover_attempts(settings: Settings, ledger: dict, rows: list[dict]) -> lis
     claimed = {k for k in ledger if not k.startswith("attempt:")}
     now = datetime.now(timezone.utc)
     for key, a in list(ledger.items()):
-        if not key.startswith("attempt:") or a.get("resolved_scan_id") or a.get("abandoned"):
+        if (not key.startswith("attempt:") or a.get("kind") == "delete" or a.get("resolved_scan_id")
+                or a.get("abandoned")):
             continue
         since = _utc(a.get("started_at")) or now
         known = {str(i) for i in a.get("known_ids") or []}
@@ -576,6 +577,11 @@ async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -
         delete = row.get_by_role("button", name="DELETE")
         if not await _visible(delete, 5_000):
             raise await site_changed_error(page, settings, step, "Row DELETE control")
+        # §12: count the deletion before clicking, so a failure after the click can't let the budget be exceeded.
+        delete_attempt = {"scan_id": None, "attempt_id": uuid.uuid4().hex, "kind": "delete",
+                          "target_scan_id": scan_id, "started_at": datetime.now(timezone.utc).isoformat()}
+        append_ledger(settings, delete_attempt)
+
         async def accept(dialog):  # native confirm(), if the site uses one
             await dialog.accept()
 
@@ -594,8 +600,9 @@ async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -
     rows = await _my_scans(page, settings, step, page_num)  # verify on reload
     if any(str(r.get("id")) == scan_id for r in rows):
         raise await site_changed_error(page, settings, step, f"Deletion of {scan_id} (row still listed)")
-    # Always ledgered (site-created scans too): the §12 daily budget counts every deletion.
-    update_ledger(settings, scan_id, scan_id=scan_id, deleted_at=datetime.now(timezone.utc).isoformat())
+    deleted_at = datetime.now(timezone.utc).isoformat()
+    update_ledger(settings, ledger_key(delete_attempt), verified=True)
+    update_ledger(settings, scan_id, scan_id=scan_id, deleted_at=deleted_at)  # site-created scans too
     after = await _remaining_on_scan_page(page, settings, step)
     return DeleteResult(deleted=True, backup_path=str(backup), scans_remaining=after,
                         allowance_restored=None if before is None or after is None else after > before)

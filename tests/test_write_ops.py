@@ -443,16 +443,16 @@ def test_site_operations_never_interleave():
 
 # --- Phase 6: daily budget, read-only retry, late filename heading ----------------------------------------------
 
-def test_budget_counts_todays_submissions_and_deletions_only():
+def test_budget_counts_todays_attempts_of_both_kinds():
     today = datetime.now().astimezone()
     yesterday = today - timedelta(days=1)
     ledger = {f"attempt:{i}": {"attempt_id": str(i), "started_at": today.isoformat()} for i in range(10)}
+    ledger["attempt:d1"] = {"attempt_id": "d1", "kind": "delete", "started_at": today.isoformat()}
     ledger["attempt:old"] = {"attempt_id": "old", "started_at": yesterday.isoformat()}
-    ledger["1"] = {"scan_id": "1", "deleted_at": today.isoformat()}
-    ledger["2"] = {"scan_id": "2", "deleted_at": yesterday.isoformat()}
+    ledger["2"] = {"scan_id": "2", "deleted_at": today.isoformat()}  # verified outcome; its attempt already counted
     assert scans.ops_today(ledger) == 11
     scans.check_budget(ledger)  # 11 < 12
-    ledger["3"] = {"scan_id": "3", "deleted_at": today.isoformat()}
+    ledger["attempt:d2"] = {"attempt_id": "d2", "kind": "delete", "started_at": today.isoformat()}
     with pytest.raises(ToolError) as e:
         scans.check_budget(ledger)
     assert e.value.code == "limit_reached"
@@ -497,7 +497,51 @@ def test_filename_heading_may_render_late(form, tmp_path, resume, monkeypatch):
     assert len(calls) >= 3
 
 
-def test_deleting_a_site_created_scan_counts_toward_the_budget():
-    ledger = {"376501": {"scan_id": "376501", "deleted_at": datetime.now(timezone.utc).isoformat()}}
-    assert scans.ops_today(ledger) == 1
-    assert scans.entry_key(ledger["376501"]) is None  # a bare deletion record is never reusable
+class DeleteRow:
+    """My Scans row whose DELETE click fails with a network error (after the click was sent)."""
+
+    def __init__(self):
+        self.clicked = []
+
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **kw):
+        return self
+
+    def locator(self, selector):
+        return self
+
+    def get_by_role(self, role, name=None):
+        return self
+
+    async def wait_for(self, state=None, timeout=None):
+        pass
+
+    async def click(self):
+        self.clicked.append(True)
+        if len(self.clicked) == 2:  # 1st click opens the menu, 2nd is DELETE
+            from playwright.async_api import Error as PlaywrightError
+            raise PlaywrightError("net::ERR_CONNECTION_RESET")
+
+
+def test_failure_after_delete_click_still_counts_toward_the_budget(site, tmp_path, monkeypatch):
+    st = _settings(tmp_path)
+    for i in range(scans.DAILY_OP_BUDGET - 1):  # 11 operations today
+        append_ledger(st, {"scan_id": None, "attempt_id": f"b{i}", "resolved_scan_id": str(900 + i),
+                           "started_at": datetime.now(timezone.utc).isoformat()})
+    s = site([row(100)])
+    delete_row = DeleteRow()
+    s.locator = lambda selector: delete_row
+    s.get_by_role = lambda role, name=None: delete_row
+    s.once = lambda event, handler: None
+    s.remove_listener = lambda event, handler: None
+    _write_backup(st, "100")
+    assert _code(scans.delete_scan(st, "100", confirm=True)) == "network_error"
+    assert len(delete_row.clicked) == 2  # the DELETE click was sent
+    ledger = load_ledger(st)
+    assert any(e.get("kind") == "delete" and e.get("target_scan_id") == "100" for e in ledger.values())
+    with pytest.raises(ToolError) as e:  # the 12th operation happened (maybe) → the next one is blocked
+        scans.check_budget(ledger)
+    assert e.value.code == "limit_reached"
