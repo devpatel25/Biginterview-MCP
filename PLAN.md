@@ -193,6 +193,13 @@ is ever stored. The human logs in once; the machine reuses the session.
   2. Navigates to the scan page.
   3. Prints "Log in via SSO + Duo, then press ENTER here." and blocks.
   4. On ENTER: calls `auth.is_logged_in()` to verify, prints the result, closes.
+- **Phase 0 PoC finding (2026-09-28, gate passed):** the portal's own session cookie is
+  session-scoped and does not survive a browser restart. What persists in `PROFILE_DIR` is the
+  Microsoft (NEU IdP) SSO session: each fresh launch is redirected through SAML, re-authenticates
+  silently (no Duo prompt), and lands on `/members/interview_dashboard/` instead of the requested
+  page. Session lifetime is therefore bounded by the IdP session, not the portal. `is_logged_in`
+  waits for the redirect chain to settle on `/members/`, re-opens the target page, then checks
+  the landmark.
 - Normal MCP operation launches **headless** with the same `PROFILE_DIR`.
 - **Never run `login.py` and the MCP server concurrently** — Playwright documents that a
   persistent context's user-data directory cannot be shared by two simultaneous launches.
