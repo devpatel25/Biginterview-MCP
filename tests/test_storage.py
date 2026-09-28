@@ -50,3 +50,14 @@ def test_ledger_append_update_and_attempt_keys(tmp_path):
     assert set(ledger) == {"attempt:a1", "7"} and ledger["7"]["medal"] == "gold"
     assert _mode(s.data_dir / "ledger.jsonl") == 0o600 and _mode(s.data_dir) == 0o700
     assert len((s.data_dir / "ledger.jsonl").read_text().splitlines()) == 3  # append-only
+
+
+def test_existing_permissive_ledger_is_tightened(tmp_path):
+    from resumeai_mcp.storage import append_ledger
+    s = _settings(tmp_path / "data")
+    s.data_dir.mkdir(parents=True)
+    ledger = s.data_dir / "ledger.jsonl"
+    ledger.write_text("")
+    ledger.chmod(0o644)
+    append_ledger(s, {"scan_id": "1"})
+    assert _mode(ledger) == 0o600

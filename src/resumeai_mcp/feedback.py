@@ -10,7 +10,7 @@ import re
 from urllib.parse import urlparse
 
 from .auth import fetch_page, require_login, site_changed_error, site_errors
-from .browser import new_page, react_props, snapshot
+from .browser import new_page, react_props, site_operation, snapshot
 from .config import Settings
 from .schemas import MEDALS, ActionItem, AtsFitCategory, Categories, Category, Criterion, ScanFeedback, ToolError
 from .storage import backup_feedback, load_ledger, update_ledger
@@ -121,6 +121,7 @@ def check_scan_id(scan_id) -> None:
         raise ToolError("invalid_input", "scan_id must be the numeric id from list_scans.", "Re-run list_scans.")
 
 
+@site_operation
 async def get_scan_feedback(settings: Settings, scan_id: str) -> ScanFeedback:
     """§7.5: read, parse, snapshot and back up the feedback of a completed scan."""
     check_scan_id(scan_id)

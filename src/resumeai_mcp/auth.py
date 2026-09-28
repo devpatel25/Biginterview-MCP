@@ -10,7 +10,7 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import ValidationError
 
-from .browser import goto, human_delay, new_page, snapshot
+from .browser import goto, human_delay, new_page, site_operation, snapshot
 from .config import Settings
 from .schemas import AuthStatus, ToolError
 
@@ -153,6 +153,7 @@ async def read_scans_remaining(page: Page, settings: Settings) -> int | None:
     return None
 
 
+@site_operation
 async def auth_status(settings: Settings) -> AuthStatus:
     """§7.1. logged_in=false is data, not an error; the counter is null when not rendered."""
     page = await new_page(settings)

@@ -340,8 +340,15 @@ Error codes are catalogued in §13.
     `invalid_input`) → heading "<guide>" + button "Remove" → radio "Add Job Description" → textboxes
     "Role / Position", "Company Name", "Job Description" → file input → heading "<basename>" (the
     filename check) → button "Scan Resume". Each missing landmark → `site_changed` + snapshot.
-  - The id is captured from My Scans page 1 (up to 60 s): newest row with the same filename (the site
-    stores spaces as underscores), same role title, created at/after the click.
+  - The id is captured from My Scans page 1 (up to 60 s): newest row **not listed before the click**
+    (ids read at the start of the call), with the same filename (the site stores spaces as underscores)
+    and role title, created at/after the click within a 60 s clock-skew allowance (safe only because
+    pre-existing ids are excluded). A captured row the site already shows as failed → `scan_failed`
+    (id kept); unreadable → `unknown_state`; already complete (fast scan) → `state="complete"`.
+  - Every control is asserted visible before use, including the Scan Resume button before the attempt
+    is recorded; a missing one → `site_changed` + snapshot, never a timeout.
+  - All six tools run one at a time (they drive one shared browser page), so two concurrent
+    `start_scan` calls cannot both pass the preflight.
   - Reuse compares guide/title/company trimmed and case-insensitively; `jd_sha256` hashes the
     normalized JD *as given* (before boilerplate stripping), so reuse survives heuristic changes.
   - §12 "one scan in flight": a ledger scan started < 15 min ago that the site still shows as
@@ -586,9 +593,11 @@ A scan is reusable **iff** all five match and its state is `complete`:
   entry `"recovered": true`. If no row matches → report `unknown_state` and stop; never invent an id.
 - **Amendment 2026-09-28 (Phase 3):** before clicking SCAN RESUME, `start_scan` appends an *attempt*
   entry (`scan_id: null`, `attempt_id`, filename, hashes, role, company, guide, `started_at`); after
-  capture it appends the scan entry and marks the attempt `resolved_scan_id`. Unresolved attempts are
-  recovered at the next `start_scan`; an unmatched attempt is marked `abandoned` so `unknown_state`
-  is reported once, not on every later call.
+  capture it appends the scan entry and marks the attempt `resolved_scan_id`. The attempt also stores
+  `known_ids` (rows listed before the click), which recovery never adopts. Unresolved attempts are
+  retried at every `start_scan`, which returns `unknown_state` (blocking a duplicate submission)
+  while the attempt's 10-minute window is still open; once the window has passed with no matching
+  row the attempt is marked `abandoned` (reported that one last time) and scanning may resume.
 
 ### 10.3 Pagination
 

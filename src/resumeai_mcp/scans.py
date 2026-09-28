@@ -14,7 +14,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from .auth import SCAN_PATH, auth_expired_error, fetch_page, on_portal, read_scans_remaining, require_login, \
     site_changed_error, site_errors
-from .browser import human_delay, new_page, react_props
+from .browser import human_delay, new_page, react_props, site_operation
 from .config import Settings
 from .feedback import SUMMARY_APP, SUMMARY_PATH, check_scan_id, read_feedback
 from .schemas import MEDALS, DeleteResult, ScanList, ScanState, ScanStatus, ScanSummary, StartScanResult, ToolError
@@ -56,6 +56,7 @@ def to_summary(row: dict, ledger: dict[str, dict]) -> ScanSummary:
     )
 
 
+@site_operation
 async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = None) -> ScanList:
     """§7.2 / §10.3. cursor is the absolute row offset as a string (opaque to the agent)."""
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
@@ -101,6 +102,9 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
 MAX_RESUME_BYTES = 5 * 1024 * 1024  # §2 #9
 CAPTURE_WINDOW_S = 60  # §9: poll My Scans up to 60 s for the new row
 RECOVERY_WINDOW = timedelta(minutes=10)  # §10.2
+# Server-vs-local clock allowance for created_at comparisons. Safe only because rows that existed before the
+# click are excluded by id (known_ids), so an older same-file/same-title row can never be captured.
+CLOCK_SKEW = timedelta(seconds=60)
 IN_FLIGHT_WINDOW = timedelta(minutes=15)  # §12: one scan in flight; older unfinished entries are stale
 # My Scans row `status` → §7.4 state. Only "success" is observed so far (2026-09-28); "failed"/"error" are the
 # site's explicit failure words. Anything else → unknown (never silently failed, §7.4).
@@ -198,9 +202,13 @@ def site_filename(name: str) -> str:
     return name.replace(" ", "_").lower()
 
 
-def find_new_row(rows: list[dict], basename: str, title: str, since: datetime) -> dict | None:
-    """Newest My Scans row for this upload: same (site-normalized) filename and title, created at/after `since`."""
+def find_new_row(rows: list[dict], basename: str, title: str, since: datetime,
+                 known_ids: set[str]) -> dict | None:
+    """Newest My Scans row for this upload: not listed before the click (`known_ids`), same (site-normalized)
+    filename and title, created at/after `since` within CLOCK_SKEW."""
     for row in rows:  # My Scans lists newest first
+        if str(row.get("id")) in known_ids:
+            continue
         a = row.get("attributes") or {}
         try:
             created = datetime.fromisoformat(str(a.get("created_at")).replace("Z", "+00:00"))
@@ -208,7 +216,7 @@ def find_new_row(rows: list[dict], basename: str, title: str, since: datetime) -
             continue
         if (site_filename(str(a.get("document_file_name", ""))) == site_filename(basename)
                 and str(a.get("job_title", "")).strip().lower() == title.strip().lower()
-                and created >= since - timedelta(seconds=30)):
+                and created >= since - CLOCK_SKEW):
             return row
     return None
 
@@ -230,12 +238,14 @@ async def _my_scans(page: Page, settings: Settings, step: str, page_num: int = 1
         raise await site_changed_error(page, settings, step, "My Scans data", e) from e
 
 
-async def _state_of(page: Page, settings: Settings, scan_id: str, rows: list[dict], ledger: dict, step: str) -> ScanState:
+async def _state_of(page: Page, settings: Settings, scan_id: str, rows: list[dict], ledger: dict,
+                    step: str) -> tuple[ScanState, str | None]:
     """State of `scan_id` from My Scans page 1 `rows`, falling back to its review_summary page for older scans.
     not_found when neither the site nor the ledger knows the id; unknown when only the ledger does (§7.4)."""
     for row in rows:
         if str(row.get("id")) == scan_id:
-            return row_state(row.get("attributes") or {})
+            attrs = row.get("attributes") or {}
+            return row_state(attrs), attrs.get("highest_score")
     ids = [int(r["id"]) for r in rows if str(r.get("id", "")).isdigit()]
     if ids and int(scan_id) < min(ids):  # older than page 1: its summary page carries the same status field
         content = await fetch_page(page, settings, SUMMARY_PATH.format(scan_id), step)
@@ -243,11 +253,11 @@ async def _state_of(page: Page, settings: Settings, scan_id: str, rows: list[dic
             try:
                 props = react_props(content, SUMMARY_APP)["parsedResume"]["data"]
                 if str(props["id"]) == scan_id:
-                    return row_state(props["attributes"])
+                    return row_state(props["attributes"]), props["attributes"].get("highest_score")
             except (ValueError, KeyError, TypeError, AttributeError):
-                return "unknown"
+                return "unknown", None
     if scan_id in ledger:
-        return "unknown"  # we created it, but the site no longer shows it readably
+        return "unknown", None  # we created it, but the site no longer shows it readably
     raise ToolError("not_found", f"Scan {scan_id} not found.", "Re-run list_scans; the id may be a typo or deleted.")
 
 
@@ -259,15 +269,14 @@ async def _remaining_on_scan_page(page: Page, settings: Settings, step: str) -> 
     return remaining
 
 
-def _record_completion(settings: Settings, ledger: dict, scan_id: str, rows: list[dict]) -> None:
+def _record_completion(settings: Settings, ledger: dict, scan_id: str, medal: str | None) -> None:
     entry = ledger.get(scan_id)
     if entry and not entry.get("completed_at"):
-        row = next((r for r in rows if str(r.get("id")) == scan_id), None)
-        medal = ((row or {}).get("attributes") or {}).get("highest_score")
         update_ledger(settings, scan_id, completed_at=datetime.now(timezone.utc).isoformat(),
                       medal=medal if medal in MEDALS else entry.get("medal"))
 
 
+@site_operation
 async def get_scan_status(settings: Settings, scan_id: str) -> ScanStatus:
     """§7.4. Cheap: the pre-check lands on the scan page (counter), then one My Scans page."""
     check_scan_id(scan_id)
@@ -277,9 +286,9 @@ async def get_scan_status(settings: Settings, scan_id: str) -> ScanStatus:
     remaining = await read_scans_remaining(page, settings)
     ledger = load_ledger(settings)
     rows = await _my_scans(page, settings, step)
-    state = await _state_of(page, settings, scan_id, rows, ledger, step)
+    state, medal = await _state_of(page, settings, scan_id, rows, ledger, step)
     if state == "complete":
-        _record_completion(settings, ledger, scan_id, rows)
+        _record_completion(settings, ledger, scan_id, medal)
     if state == "unknown":
         await site_changed_error(page, settings, step, "Scan row")  # saves the snapshot §7.4 asks for
     return ScanStatus(scan_id=scan_id, state=state, scans_remaining=remaining,
@@ -287,29 +296,37 @@ async def get_scan_status(settings: Settings, scan_id: str) -> ScanStatus:
 
 
 def _recover_attempts(settings: Settings, ledger: dict, rows: list[dict]) -> list[str]:
-    """§10.2: adopt the site row for each pending attempt; return attempt keys that could not be matched."""
-    lost = []
+    """§10.2: adopt the site row for each pending attempt; return attempt keys still unresolved.
+
+    An unmatched attempt stays pending (the row may still appear) and blocks new submissions via unknown_state.
+    Only once its whole 10-min window has passed with no row is it marked `abandoned` — the safe resolution:
+    §10.2 would never adopt a later row for it anyway."""
+    unresolved = []
     claimed = {k for k in ledger if not k.startswith("attempt:")}
+    now = datetime.now(timezone.utc)
     for key, a in list(ledger.items()):
         if not key.startswith("attempt:") or a.get("resolved_scan_id") or a.get("abandoned"):
             continue
-        since = _utc(a.get("started_at")) or datetime.now(timezone.utc)
-        row = next((r for r in rows if str(r.get("id")) not in claimed
+        since = _utc(a.get("started_at")) or now
+        known = {str(i) for i in a.get("known_ids") or []}
+        row = next((r for r in rows if str(r.get("id")) not in claimed | known
                     and (created := _utc((r.get("attributes") or {}).get("created_at")))
-                    and since - timedelta(seconds=30) <= created <= since + RECOVERY_WINDOW
+                    and since - CLOCK_SKEW <= created <= since + RECOVERY_WINDOW
                     and site_filename(str((r.get("attributes") or {}).get("document_file_name", "")))
                     == site_filename(a.get("resume_filename", ""))), None)
         if row is None:
-            update_ledger(settings, key, abandoned=True)  # reported once as unknown_state; never invent an id
-            lost.append(key)
+            if now - since > RECOVERY_WINDOW + CLOCK_SKEW:
+                update_ledger(settings, key, abandoned=True)
+            unresolved.append(key)
             continue
         scan_id = str(row["id"])
         claimed.add(scan_id)
         append_ledger(settings, {**a, "scan_id": scan_id, "recovered": True})
         update_ledger(settings, key, resolved_scan_id=scan_id)
-    return lost
+    return unresolved
 
 
+@site_operation
 async def start_scan(settings: Settings, resume_path: str, job_title: str, company: str, job_description: str,
                      scoring_guide: str = "Graduate - STEM Focus") -> StartScanResult:
     """§7.3: idempotent on the full reuse key; otherwise the §9 workflow, then capture the id and ledger it."""
@@ -323,9 +340,10 @@ async def start_scan(settings: Settings, resume_path: str, job_title: str, compa
     ledger = load_ledger(settings)
     rows = await _my_scans(page, settings, step)
 
-    if lost := _recover_attempts(settings, ledger, rows):
-        raise ToolError("unknown_state", f"{len(lost)} earlier scan submission(s) could not be matched to a My Scans row.",
-                        "Stop. Check My Scans manually before scanning again; the attempt is marked abandoned.")
+    if unresolved := _recover_attempts(settings, ledger, rows):
+        raise ToolError("unknown_state", f"{len(unresolved)} earlier scan submission(s) not yet matched to a My Scans row.",
+                        "Stop; do not rescan. Retry start_scan later (the row may still appear) or check My Scans "
+                        "manually. After its 10-minute window an unmatched submission is marked abandoned.")
     ledger = load_ledger(settings)
 
     now = datetime.now(timezone.utc)
@@ -333,21 +351,22 @@ async def start_scan(settings: Settings, resume_path: str, job_title: str, compa
         started = _utc(e.get("started_at"))
         if (e.get("scan_id") and not e.get("completed_at") and not e.get("deleted_at") and started
                 and now - started < IN_FLIGHT_WINDOW
-                and await _state_of(page, settings, scan_id, rows, ledger, step) in ("queued", "scanning")):
+                and (await _state_of(page, settings, scan_id, rows, ledger, step))[0] in ("queued", "scanning")):
             raise ToolError("invalid_input", f"Scan {scan_id} is still in flight.",
                             "Poll get_scan_status until it completes; only one scan may run at a time.")
 
     for e in sorted(ledger.values(), key=lambda e: e.get("started_at") or "", reverse=True):  # §10.1 reuse
         if entry_key(e) == key and not e.get("deleted_at"):
-            if await _state_of(page, settings, str(e["scan_id"]), rows, ledger, step) == "complete":
+            if (await _state_of(page, settings, str(e["scan_id"]), rows, ledger, step))[0] == "complete":
                 return StartScanResult(scan_id=str(e["scan_id"]), reused=True, state="complete",
                                        scans_remaining=remaining)
 
     if remaining == 0:
         raise ToolError("limit_reached", "Daily scan allowance exhausted (0 scans left today).",
                         "Stop. Resume after local midnight or ask the user to request a reset.")
+    known_ids = {str(r.get("id")) for r in rows}
     scan_id, state = await _submit(page, settings, path, job_title, company, strip_boilerplate(job_description),
-                                   scoring_guide, resume_sha, jd_sha, step)
+                                   scoring_guide, resume_sha, jd_sha, step, known_ids)
     return StartScanResult(scan_id=scan_id, reused=False, state=state,
                            scans_remaining=await _remaining_on_scan_page(page, settings, step))
 
@@ -361,8 +380,9 @@ async def _visible(locator, timeout_ms: int = 10_000) -> bool:
 
 
 async def _submit(page: Page, settings: Settings, path: Path, title: str, company: str, jd: str, guide: str,
-                  resume_sha: str, jd_sha: str, step: str) -> tuple[str, ScanState]:
-    """§9 workflow on the scan page. Every step asserts its landmark; nothing is clicked blindly."""
+                  resume_sha: str, jd_sha: str, step: str, known_ids: set[str]) -> tuple[str, ScanState]:
+    """§9 workflow on the scan page. Every control is asserted visible before use (missing → site_changed +
+    snapshot, never a Playwright timeout); nothing is clicked blindly."""
     await fetch_page(page, settings, SCAN_PATH, step)
 
     async def landmark(locator, what: str):
@@ -370,11 +390,11 @@ async def _submit(page: Page, settings: Settings, path: Path, title: str, compan
             if not on_portal(page.url, settings):
                 raise auth_expired_error()
             raise await site_changed_error(page, settings, step, what)
+        return locator
 
     async with site_errors(page, settings):
         await human_delay(settings)
-        search = page.get_by_role("searchbox", name="Search for a score guide")
-        await landmark(search, "Scoring guide search box")
+        search = await landmark(page.get_by_role("searchbox", name="Search for a score guide"), "Scoring guide search box")
         await search.fill(guide)
         await human_delay(settings)
         select = page.get_by_role("button", name=f"Select {guide}", exact=True)
@@ -386,43 +406,51 @@ async def _submit(page: Page, settings: Settings, path: Path, title: str, compan
         await landmark(page.get_by_role("button", name="Remove", exact=True), "Scoring guide Remove control")
 
         await human_delay(settings)
-        await page.get_by_role("radio", name="Add Job Description").check()
-        role_box = page.get_by_role("textbox", name="Role / Position")
-        await landmark(role_box, "Role / Position field")
-        await role_box.fill(title)
-        await human_delay(settings)
-        await page.get_by_role("textbox", name="Company Name").fill(company)
-        await human_delay(settings)
-        await page.get_by_role("textbox", name="Job Description").fill(jd)
+        radio = await landmark(page.get_by_role("radio", name="Add Job Description"), "Add Job Description option")
+        await radio.check()
+        for label, value in (("Role / Position", title), ("Company Name", company), ("Job Description", jd)):
+            box = await landmark(page.get_by_role("textbox", name=label), f"{label} field")
+            await box.fill(value)
+            await human_delay(settings)
 
-        await human_delay(settings)
-        await page.locator("input[type=file]").set_input_files(str(path))  # no accessible name on the file input
+        upload = page.locator("input[type=file]")  # no accessible name on the file input
+        if not await upload.count():
+            raise await site_changed_error(page, settings, step, "Resume file input")
+        await upload.first.set_input_files(str(path))
         await landmark(page.get_by_role("heading", name=path.name, exact=True), f"Uploaded filename '{path.name}'")
+        scan_button = await landmark(page.get_by_role("button", name="Scan Resume", exact=True), "Scan Resume button")
 
         # §10.2: record the attempt *before* clicking, so a crash after the click is recoverable.
         attempt = {"scan_id": None, "attempt_id": uuid.uuid4().hex, "resume_filename": path.name,
                    "resume_sha256": resume_sha, "jd_sha256": jd_sha, "role_title": title, "company": company,
                    "scoring_guide": guide, "started_at": datetime.now(timezone.utc).isoformat(),
-                   "completed_at": None, "medal": None, "ats_badge": None, "credibility_badge": None,
-                   "recovered": False, "deleted_at": None}
+                   "known_ids": sorted(known_ids), "completed_at": None, "medal": None, "ats_badge": None,
+                   "credibility_badge": None, "recovered": False, "deleted_at": None}
         append_ledger(settings, attempt)
         await human_delay(settings)
         clicked_at = datetime.now(timezone.utc)
-        await page.get_by_role("button", name="Scan Resume", exact=True).click()
+        await scan_button.click()
 
     deadline = clicked_at + timedelta(seconds=CAPTURE_WINDOW_S)
     while datetime.now(timezone.utc) < deadline:
         rows = await _my_scans(page, settings, step)  # fetch_page includes the 2–5 s human delay
-        if row := find_new_row(rows, path.name, title, clicked_at):
+        if row := find_new_row(rows, path.name, title, clicked_at, known_ids):
             scan_id = str(row["id"])
             append_ledger(settings, {**attempt, "scan_id": scan_id})  # §10.2: immediately after capture
             update_ledger(settings, ledger_key(attempt), resolved_scan_id=scan_id)
             state = row_state(row.get("attributes") or {})
-            return scan_id, state if state in ("queued", "scanning") else "scanning"
+            if state == "failed":
+                raise ToolError("scan_failed", f"Scan {scan_id} was submitted but the site reports it failed.",
+                                f"Keep scan id {scan_id}; retry once with a fresh upload, then stop (§13).")
+            if state == "unknown":
+                raise ToolError("unknown_state", f"Scan {scan_id} was submitted but its site status is unreadable.",
+                                f"Do not rescan. Inspect scan {scan_id} in My Scans / via get_scan_status.")
+            return scan_id, state
     raise ToolError("unknown_state", "Scan submitted but its id did not appear in My Scans within 60 s.",
                     "Do not rescan. The next start_scan recovers it from My Scans (§10.2), or check manually.")
 
 
+@site_operation
 async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -> DeleteResult:
     """§7.6 — order matters: backup first, latest-result guard, UI delete, verify, re-read the counter."""
     check_scan_id(scan_id)
@@ -434,18 +462,18 @@ async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -
     before = await read_scans_remaining(page, settings)
     ledger = load_ledger(settings)
 
-    latest = max((e for e in ledger.values() if e.get("scan_id") and not e.get("deleted_at")),
-                 key=lambda e: e.get("started_at") or "", default=None)
-    if latest and str(latest["scan_id"]) == scan_id and not confirm:
-        raise ToolError("invalid_input", f"Scan {scan_id} is the latest loop result.",
-                        "Pass confirm=true to delete it anyway.")
-
-    backup = feedback_backup(settings, scan_id)  # §7.6 step 1: re-verified backup, else fetch + back up now
+    backup = feedback_backup(settings, scan_id)  # §7.6 step 1 (always first): re-verified backup, else fetch now
     if backup is None:
         await read_feedback(page, settings, scan_id, ledger)
         backup = feedback_backup(settings, scan_id)
         if backup is None:
             raise ToolError("storage_error", "Feedback backup could not be verified.", "Stop. Deletion aborted.")
+
+    latest = max((e for e in ledger.values() if e.get("scan_id") and not e.get("deleted_at")),
+                 key=lambda e: e.get("started_at") or "", default=None)
+    if latest and str(latest["scan_id"]) == scan_id and not confirm:  # §7.6 step 2
+        raise ToolError("invalid_input", f"Scan {scan_id} is the latest loop result (feedback backed up).",
+                        "Pass confirm=true to delete it anyway.")
 
     page_num = await _find_page(page, settings, scan_id, step)
     href = SUMMARY_PATH.format(scan_id)

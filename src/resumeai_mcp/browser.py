@@ -1,6 +1,7 @@
 """Playwright persistent-context lifecycle, human_delay, snapshots (PLAN.md §6, §12)."""
 
 import asyncio
+import functools
 import json
 import os
 import random
@@ -56,6 +57,16 @@ def profile_in_use(profile_dir: Path) -> bool:
 _pw: Playwright | None = None
 _ctx: BrowserContext | None = None
 _init_lock = asyncio.Lock()  # serializes launch: concurrent callers must not start two browsers
+_site_lock = asyncio.Lock()  # one tool at a time: all tools drive the same page (§12: one scan in flight)
+
+
+def site_operation(fn):
+    """Run a site-touching tool exclusively. Inner helpers (read_feedback, …) must not re-acquire it."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        async with _site_lock:
+            return await fn(*args, **kwargs)
+    return wrapper
 
 
 async def ensure_context(settings: Settings, headless: bool | None = None) -> BrowserContext:

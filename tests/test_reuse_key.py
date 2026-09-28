@@ -118,7 +118,15 @@ def test_find_new_row_matches_site_normalized_filename_title_and_time():
     t0 = datetime(2026, 9, 28, 15, 0, tzinfo=timezone.utc)
     rows = [_row(3, "Resume_(1).pdf", "AI Intern", t0 + timedelta(seconds=5)),
             _row(2, "Resume_(1).pdf", "AI Intern", t0 - timedelta(hours=1))]
-    assert find_new_row(rows, "Resume (1).pdf", "ai intern", t0)["id"] == "3"
-    assert find_new_row(rows[1:], "Resume (1).pdf", "AI Intern", t0) is None  # old row with same name ≠ new scan
-    assert find_new_row(rows, "Other.pdf", "AI Intern", t0) is None
-    assert find_new_row(rows, "Resume (1).pdf", "SWE", t0) is None
+    assert find_new_row(rows, "Resume (1).pdf", "ai intern", t0, set())["id"] == "3"
+    assert find_new_row(rows[1:], "Resume (1).pdf", "AI Intern", t0, set()) is None  # too old
+    assert find_new_row(rows, "Other.pdf", "AI Intern", t0, set()) is None
+    assert find_new_row(rows, "Resume (1).pdf", "SWE", t0, set()) is None
+
+
+def test_find_new_row_never_captures_a_row_listed_before_the_click():
+    t0 = datetime(2026, 9, 28, 15, 0, tzinfo=timezone.utc)
+    old = _row(2, "resume.pdf", "AI Intern", t0 - timedelta(seconds=20))  # same file+title, 20 s before click
+    assert find_new_row([old], "resume.pdf", "AI Intern", t0, {"2"}) is None
+    new = _row(3, "resume.pdf", "AI Intern", t0 + timedelta(seconds=10))
+    assert find_new_row([new, old], "resume.pdf", "AI Intern", t0, {"2"})["id"] == "3"

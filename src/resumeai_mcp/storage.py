@@ -63,6 +63,7 @@ def append_ledger(settings: Settings, entry: dict) -> None:
     try:
         private_dir(settings.data_dir)
         fd = os.open(settings.data_dir / "ledger.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.fchmod(fd, 0o600)  # the open() mode only applies on creation; fix a pre-existing permissive file
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
             f.flush()
@@ -80,13 +81,13 @@ def update_ledger(settings: Settings, key: str, **fields) -> dict:
 
 
 def feedback_backup(settings: Settings, scan_id: str) -> Path | None:
-    """Existing backup path if it re-validates as ScanFeedback (§14 re-verify before delete), else None."""
+    """Existing backup path if it re-validates as ScanFeedback *for this scan_id* (§14 re-verify before delete)."""
     path = settings.data_dir / "feedback" / f"{scan_id}.json"
     try:
-        ScanFeedback.model_validate_json(path.read_text(encoding="utf-8"))
+        backup = ScanFeedback.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return path
+    return path if backup.scan_id == scan_id else None
 
 
 def backup_feedback(settings: Settings, feedback: ScanFeedback) -> Path:
