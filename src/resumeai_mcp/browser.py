@@ -50,6 +50,7 @@ async def ensure_context(settings: Settings, headless: bool | None = None) -> Br
     global _pw, _ctx
     if _ctx is not None:
         return _ctx
+    private_dir(settings.data_dir)  # profile usually lives inside it; parents get default perms
     profile = private_dir(settings.profile_dir)
     if profile_in_use(profile):
         raise ProfileInUseError(
