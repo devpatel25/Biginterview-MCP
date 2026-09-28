@@ -19,7 +19,7 @@ class ProfileInUseError(ToolError):
     def __init__(self, profile: Path):
         super().__init__(
             "profile_in_use",
-            f"Browser profile {profile} is in use (is scripts/login.py running?).",
+            "The browser profile is in use (is scripts/login.py running?).",  # no local path: §7.0 no PII
             "Close the other browser / login script, then retry.",
         )
 

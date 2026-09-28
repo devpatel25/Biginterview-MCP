@@ -38,7 +38,7 @@ def load_ledger(settings: Settings) -> dict[str, dict]:
         return {}
     except (OSError, ValueError, KeyError, TypeError) as e:
         raise ToolError(
-            "storage_error", f"Cannot read ledger {path}: {type(e).__name__}",
+            "storage_error", f"Cannot read ledger.jsonl in DATA_DIR ({type(e).__name__}).",
             "Inspect or repair ledger.jsonl; do not delete scans until it reads cleanly.",
         ) from e
     return entries
