@@ -335,6 +335,18 @@ Error codes are catalogued in §13.
   6. If the site reports the daily limit is reached → error `limit_reached`. The tool does not
      delete anything; allowance management is the agent's explicit decision.
 - **Human-pacing:** random 2–5 s delays between the workflow steps (§12).
+- **Amendment 2026-09-28 (Phase 3, form explored live without scanning):**
+  - Landmarks: searchbox "Search for a score guide" → button "Select <guide>" (exact; absent →
+    `invalid_input`) → heading "<guide>" + button "Remove" → radio "Add Job Description" → textboxes
+    "Role / Position", "Company Name", "Job Description" → file input → heading "<basename>" (the
+    filename check) → button "Scan Resume". Each missing landmark → `site_changed` + snapshot.
+  - The id is captured from My Scans page 1 (up to 60 s): newest row with the same filename (the site
+    stores spaces as underscores), same role title, created at/after the click.
+  - Reuse compares guide/title/company trimmed and case-insensitively; `jd_sha256` hashes the
+    normalized JD *as given* (before boilerplate stripping), so reuse survives heuristic changes.
+  - §12 "one scan in flight": a ledger scan started < 15 min ago that the site still shows as
+    queued/scanning → `invalid_input` ("poll get_scan_status").
+  - `scans_remaining = 0` → `limit_reached` before any form interaction.
 
 ### 7.4 `get_scan_status(scan_id: string)`
 
@@ -349,6 +361,12 @@ Error codes are catalogued in §13.
   | `checked_at` | datetime | — |
 - **Behavior:** On `unknown`, save an HTML snapshot and include a hint to inspect it; the agent
   treats `unknown` as "stop and investigate", not as failure.
+- **Amendment 2026-09-28 (Phase 3):** state comes from the My Scans row `status` (page 1; older ids
+  from their review_summary page, same field). Observed: `success` → `complete`. Explicit
+  `failed`/`error` → `failed`; `processing`/`scanning` → `scanning`; `pending`/`queued` → `queued`
+  (in-progress values to be confirmed during the first live scan); anything else → `unknown`. An id
+  neither the site nor the ledger knows → `not_found`; one only the ledger knows → `unknown`. On
+  `complete` the ledger entry gets `completed_at` + `medal`.
 - **Pacing note in description:** "Poll no more than once every 20 seconds."
 
 ### 7.5 `get_scan_feedback(scan_id: string)`
@@ -393,6 +411,11 @@ Error codes are catalogued in §13.
   2. Refuse to delete the latest loop result unless `confirm=true`.
   3. Delete via the site's UI (confirm dialog if present).
   4. Re-read the allowance counter and report `allowance_restored` truthfully.
+- **Amendment 2026-09-28 (Phase 3):** "latest loop result" = the newest non-deleted ledger scan (by
+  `started_at`). An existing backup is re-validated as `ScanFeedback` before being trusted. The row's
+  menu → DELETE; a native `confirm()` or an ARIA dialog's Delete/Yes/Confirm/OK button is accepted
+  (dialog shape not yet verified live). Deletion is verified by reloading My Scans; a row still
+  listed → `site_changed` + snapshot. The ledger entry gets `deleted_at`.
 
 ---
 
@@ -561,6 +584,11 @@ A scan is reusable **iff** all five match and its state is `complete`:
   recording the id): on next run, `list_scans` → adopt the newest row whose `resume_filename`
   matches and whose `scanned_at` is within a 10-minute window of the attempt; mark the ledger
   entry `"recovered": true`. If no row matches → report `unknown_state` and stop; never invent an id.
+- **Amendment 2026-09-28 (Phase 3):** before clicking SCAN RESUME, `start_scan` appends an *attempt*
+  entry (`scan_id: null`, `attempt_id`, filename, hashes, role, company, guide, `started_at`); after
+  capture it appends the scan entry and marks the attempt `resolved_scan_id`. Unresolved attempts are
+  recovered at the next `start_scan`; an unmatched attempt is marked `abandoned` so `unknown_state`
+  is reported once, not on every later call.
 
 ### 10.3 Pagination
 
