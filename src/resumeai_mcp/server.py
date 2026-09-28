@@ -15,9 +15,10 @@ from fastmcp.tools.tool import ToolResult
 from pydantic import BaseModel, ValidationError
 
 from . import auth, feedback, scans
-from .browser import close_context
+from .browser import close_context, human_delay
 from .config import load_settings
 from .schemas import ToolError
+from .storage import purge_old_snapshots
 
 log = logging.getLogger("resumeai_mcp")
 
@@ -26,21 +27,41 @@ HONESTY = ("Honesty rule: unmatched keywords are verification candidates, not a 
            "metrics, dates, degrees, or employment. A truthful Silver beats a fabricated Gold.")
 PACING = ("Pacing: the server adds random 2-5 s human-like delays between UI actions and runs one tool at a time; "
           "never call tools in parallel.")
-ERRORS = ("On ok=false follow error.hint (PLAN.md §13): auth_expired, site_changed, unknown_state, internal_error and "
-          "profile_in_use are never retried blindly; otherwise retry at most twice.")
+ERRORS = ("On ok=false follow error.hint (PLAN.md §13). Never retry auth_expired, site_changed, unknown_state, "
+          "internal_error or profile_in_use blindly. Read tools already retry network_error twice themselves, and "
+          "start_scan/delete_scan must be reconciled (get_scan_status / list_scans) before any retry; otherwise "
+          "retry at most twice.")
+READ_EXHAUSTED_HINT = "Stop and report: the server already retried this read twice (PLAN.md §13). Do not retry."
+WRITE_NETWORK_HINT = ("Stop; do not retry blindly — the operation may have reached the site. Reconcile first with "
+                      "list_scans / get_scan_status (a start_scan retry is deduplicated by the reuse key and recovery).")
 
 
-async def envelope(call) -> dict:
-    """Run one tool call and wrap its result or error in the §7.0 envelope."""
-    try:
-        data = await call
-    except ToolError as e:
-        return {"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}
-    except Exception as e:  # §7.0: no bare exceptions reach the agent
-        log.exception("unexpected failure in tool call")
-        return {"ok": False, "error": {"code": "internal_error",
-                                       "message": f"Unexpected failure ({type(e).__name__}).",
-                                       "hint": "Stop and report to the user; see the MCP server log for details."}}
+READ_RETRIES = 2  # §13 retry policy: at most 2 retries, 2–5 s apart
+
+
+async def envelope(call, retry_network: bool = False) -> dict:
+    """Run one tool call (a zero-arg callable returning a coroutine) and wrap it in the §7.0 envelope.
+
+    retry_network: read-only tools retry network_error up to twice with the human delay (§13). Write tools never
+    retry here — a repeated start_scan/delete_scan must stay the agent's explicit decision."""
+    attempts = 1 + (READ_RETRIES if retry_network else 0)
+    for attempt in range(attempts):
+        try:
+            data = await call()
+            break
+        except ToolError as e:
+            if e.code == "network_error" and attempt + 1 < attempts:
+                await human_delay(settings)
+                continue
+            hint = e.hint
+            if e.code == "network_error":  # the generic "retry 2x" would multiply retries or repeat a write
+                hint = READ_EXHAUSTED_HINT if retry_network else WRITE_NETWORK_HINT
+            return {"ok": False, "error": {"code": e.code, "message": e.message, "hint": hint}}
+        except Exception as e:  # §7.0: no bare exceptions reach the agent
+            log.exception("unexpected failure in tool call")
+            return {"ok": False, "error": {"code": "internal_error",
+                                           "message": f"Unexpected failure ({type(e).__name__}).",
+                                           "hint": "Stop and report to the user; see the MCP server log for details."}}
     return {"ok": True, "data": data.model_dump(mode="json") if isinstance(data, BaseModel) else data}
 
 
@@ -60,6 +81,7 @@ class ArgumentErrorsAsEnvelope(Middleware):
 
 @asynccontextmanager
 async def lifespan(app):
+    purge_old_snapshots(settings)  # §14 retention also runs at every server start, not only on the next save
     try:
         yield
     finally:
@@ -78,7 +100,7 @@ settings = load_settings()
     "account_email (null when not visible), checked_at. If logged_in=false: stop and ask the user to run "
     "scripts/login.py. " + PACING + " " + ERRORS))
 async def auth_status() -> dict:
-    return await envelope(auth.auth_status(settings))
+    return await envelope(lambda: auth.auth_status(settings), retry_network=True)
 
 
 @mcp.tool(description=(
@@ -87,7 +109,7 @@ async def auth_status() -> dict:
     "resume_sha256/jd_sha256 are only known for scans created by this server (null otherwise; such scans are never "
     "reused). " + PACING + " " + ERRORS))
 async def list_scans(limit: int = 20, cursor: str | None = None) -> dict:
-    return await envelope(scans.list_scans(settings, limit, cursor))
+    return await envelope(lambda: scans.list_scans(settings, limit, cursor), retry_network=True)
 
 
 @mcp.tool(description=(
@@ -99,7 +121,8 @@ async def list_scans(limit: int = 20, cursor: str | None = None) -> dict:
     + PACING + " " + ERRORS))
 async def start_scan(resume_path: str, job_title: str, company: str, job_description: str,
                      scoring_guide: str = "Graduate - STEM Focus") -> dict:
-    return await envelope(scans.start_scan(settings, resume_path, job_title, company, job_description, scoring_guide))
+    return await envelope(lambda: scans.start_scan(settings, resume_path, job_title, company, job_description,
+                                                   scoring_guide))
 
 
 @mcp.tool(description=(
@@ -108,7 +131,7 @@ async def start_scan(resume_path: str, job_title: str, company: str, job_descrip
     "than once every 20 s; give up after 10 minutes (treat as scan_timeout and keep the scan_id). Also returns scans_remaining. "
     + PACING + " " + ERRORS))
 async def get_scan_status(scan_id: str) -> dict:
-    return await envelope(scans.get_scan_status(settings, scan_id))
+    return await envelope(lambda: scans.get_scan_status(settings, scan_id), retry_network=True)
 
 
 @mcp.tool(description=(
@@ -118,7 +141,7 @@ async def get_scan_status(scan_id: str) -> dict:
     "means only the summary badges were readable. A local backup is written. " + HONESTY + " " + PACING + " "
     + ERRORS))
 async def get_scan_feedback(scan_id: str) -> dict:
-    return await envelope(feedback.get_scan_feedback(settings, scan_id))
+    return await envelope(lambda: feedback.get_scan_feedback(settings, scan_id), retry_network=True)
 
 
 @mcp.tool(description=(
@@ -126,7 +149,7 @@ async def get_scan_feedback(scan_id: str) -> dict:
     "allowance_restored). Feedback is always backed up locally first; the deletion is aborted if that fails. "
     "Deleting the latest result of the current loop requires confirm=true. " + PACING + " " + ERRORS))
 async def delete_scan(scan_id: str, confirm: bool = False) -> dict:
-    return await envelope(scans.delete_scan(settings, scan_id, confirm))
+    return await envelope(lambda: scans.delete_scan(settings, scan_id, confirm))
 
 
 def main() -> None:

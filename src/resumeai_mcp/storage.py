@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,23 @@ def data_subdir(settings: Settings, name: str) -> Path:
     """DATA_DIR/<name>, both 0700: mkdir(parents=True) alone would leave DATA_DIR at umask perms (§6.4)."""
     private_dir(settings.data_dir)
     return private_dir(settings.data_dir / name)
+
+
+SNAPSHOT_RETENTION_DAYS = 30  # §14: snapshots hold full page HTML (PII)
+
+
+def purge_old_snapshots(settings: Settings) -> int:
+    """Delete snapshots older than 30 days (§14 retention). Returns how many were removed; never raises."""
+    cutoff = time.time() - SNAPSHOT_RETENTION_DAYS * 86400
+    removed = 0
+    for path in (settings.data_dir / "snapshots").glob("*.html"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            pass  # a stale snapshot must never break the tool that is saving a new one
+    return removed
 
 
 def save_snapshot(settings: Settings, name: str, html: str) -> Path:
@@ -30,6 +48,7 @@ def save_snapshot(settings: Settings, name: str, html: str) -> Path:
     except OSError as e:  # every snapshot (success and site_changed paths) goes through here
         raise ToolError("storage_error", f"Cannot write HTML snapshot ({type(e).__name__}).",
                         "Stop. Fix DATA_DIR permissions/space, then retry.") from e
+    purge_old_snapshots(settings)
     return Path(path)
 
 
