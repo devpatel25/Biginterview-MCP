@@ -583,7 +583,7 @@ async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -
         try:
             await human_delay(settings)
             await delete.click()
-            # ponytail: confirm-dialog shape unverified live — accepts a native confirm or an ARIA dialog button.
+            # Verified live 2026-09-28 (scan 376501) through this path; accepts a native confirm or an ARIA dialog button.
             dialog = page.get_by_role("dialog")
             if await _visible(dialog, 3_000):
                 await human_delay(settings)

@@ -430,8 +430,9 @@ server's stderr log). Tools run one at a time (shared browser page).
   4. Re-read the allowance counter and report `allowance_restored` truthfully.
 - **Amendment 2026-09-28 (Phase 3):** "latest loop result" = the newest non-deleted ledger scan (by
   `started_at`). An existing backup is re-validated as `ScanFeedback` before being trusted. The row's
-  menu → DELETE; a native `confirm()` or an ARIA dialog's Delete/Yes/Confirm/OK button is accepted
-  (dialog shape not yet verified live). Deletion is verified by reloading My Scans; a row still
+  menu → DELETE; a native `confirm()` or an ARIA dialog's Delete/Yes/Confirm/OK button is accepted.
+  **Verified live 2026-09-28** (scan 376501, user-approved): backup written, row gone after reload,
+  counter unchanged → `allowance_restored=false` (deletion did not restore a scan). Deletion is verified by reloading My Scans; a row still
   listed → `site_changed` + snapshot. The ledger entry gets `deleted_at`.
 
 ---
