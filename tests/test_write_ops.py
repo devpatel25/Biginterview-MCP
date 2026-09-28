@@ -334,6 +334,9 @@ class FakeLocator:
     async def all_inner_texts(self):
         return [name for role, name in self.form.controls if role == "heading"]
 
+    def locator(self, selector):  # "xpath=.." from the Remove file button → the upload box (≈ the form here)
+        return self.form
+
 
 class FakeForm:
     def __init__(self, missing=(), new_row=None):
@@ -436,3 +439,59 @@ def test_site_operations_never_interleave():
 
     asyncio.run(both())
     assert events in (["a-start", "a-end", "b-start", "b-end"], ["b-start", "b-end", "a-start", "a-end"])
+
+
+# --- Phase 6: daily budget, read-only retry, late filename heading ----------------------------------------------
+
+def test_budget_counts_todays_submissions_and_deletions_only():
+    today = datetime.now().astimezone()
+    yesterday = today - timedelta(days=1)
+    ledger = {f"attempt:{i}": {"attempt_id": str(i), "started_at": today.isoformat()} for i in range(10)}
+    ledger["attempt:old"] = {"attempt_id": "old", "started_at": yesterday.isoformat()}
+    ledger["1"] = {"scan_id": "1", "deleted_at": today.isoformat()}
+    ledger["2"] = {"scan_id": "2", "deleted_at": yesterday.isoformat()}
+    assert scans.ops_today(ledger) == 11
+    scans.check_budget(ledger)  # 11 < 12
+    ledger["3"] = {"scan_id": "3", "deleted_at": today.isoformat()}
+    with pytest.raises(ToolError) as e:
+        scans.check_budget(ledger)
+    assert e.value.code == "limit_reached"
+
+
+def _fill_budget(st):
+    for i in range(scans.DAILY_OP_BUDGET):
+        append_ledger(st, {"scan_id": None, "attempt_id": f"b{i}", "resolved_scan_id": str(900 + i),
+                           "started_at": datetime.now(timezone.utc).isoformat()})
+
+
+def test_budget_blocks_fresh_scan_but_not_reuse(site, tmp_path, resume):
+    st = _settings(tmp_path)
+    _fill_budget(st)
+    _ledger_scan(st, resume, "100")
+    site([row(100)], remaining=3)
+    assert _run(_start(st, resume)).reused is True  # reuse costs nothing
+    assert _code(_start(st, resume, company="Other")) == "limit_reached"
+
+
+def test_budget_blocks_delete_after_backup(site, tmp_path, monkeypatch):
+    st = _settings(tmp_path)
+    _fill_budget(st)
+    s = site([row(100)])
+    _write_backup(st, "100")
+    assert _code(scans.delete_scan(st, "100", confirm=True)) == "limit_reached"
+    assert not any(p.startswith(scans.SCANS_PATH) for p in s.loads)
+
+
+def test_filename_heading_may_render_late(form, tmp_path, resume, monkeypatch):
+    st = _settings(tmp_path)
+    f = form(new_row=lambda: row(310, status="parsing", created=datetime.now(timezone.utc)))
+    calls = []
+    original = FakeLocator.all_inner_texts
+
+    async def late(self):
+        calls.append(1)
+        return [] if len(calls) < 3 else await original(self)  # empty for the first two polls
+
+    monkeypatch.setattr(FakeLocator, "all_inner_texts", late)
+    assert _run(_submit(st, f, resume)) == ("310", "scanning")
+    assert len(calls) >= 3

@@ -1,5 +1,6 @@
 """list_scans, start_scan, get_scan_status, delete_scan (PLAN.md §7.2-7.6, §10). Phases 1/3."""
 
+import asyncio
 import hashlib
 import re
 import uuid
@@ -106,6 +107,7 @@ RECOVERY_WINDOW = timedelta(minutes=10)  # §10.2
 # Server-vs-local clock allowance for created_at comparisons. Safe only because rows that existed before the
 # click are excluded by id (known_ids), so an older same-file/same-title row can never be captured.
 CLOCK_SKEW = timedelta(seconds=60)
+DAILY_OP_BUDGET = 12  # §12: scan operations (starts + deletes) per local calendar day
 IN_FLIGHT_WINDOW = timedelta(minutes=15)  # §12: one scan in flight; older unfinished entries are stale
 # My Scans row `status` → §7.4 state. Observed live 2026-09-28 (scan 690156): "parsing" → "analyzing" →
 # "success" in ~1 min. "failed"/"error" are the site's explicit failure words (not yet observed). The other
@@ -272,6 +274,23 @@ def find_new_row(rows: list[dict], basename: str, title: str, since: datetime,
     return None
 
 
+def ops_today(ledger: dict, today=None) -> int:
+    """§12 budget count: scan submissions (attempt entries, one per SCAN RESUME click) + deletions, local day."""
+    today = today or datetime.now().astimezone().date()
+
+    def on_today(value) -> bool:
+        ts = _utc(value)
+        return bool(ts) and ts.astimezone().date() == today
+    return (sum(1 for k, e in ledger.items() if k.startswith("attempt:") and on_today(e.get("started_at")))
+            + sum(1 for e in ledger.values() if e.get("scan_id") and on_today(e.get("deleted_at"))))
+
+
+def check_budget(ledger: dict) -> None:
+    if ops_today(ledger) >= DAILY_OP_BUDGET:
+        raise ToolError("limit_reached", f"Daily scan-operation budget reached ({DAILY_OP_BUDGET} starts + deletes).",
+                        "Stop for today (account-safety rule, PLAN.md §12); resume tomorrow.")
+
+
 def _utc(value) -> datetime | None:
     try:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -415,6 +434,7 @@ async def start_scan(settings: Settings, resume_path: str, job_title: str, compa
                 return StartScanResult(scan_id=str(e["scan_id"]), reused=True, state="complete",
                                        scans_remaining=remaining)
 
+    check_budget(ledger)  # reuse above costs nothing; a fresh submission counts
     if remaining == 0:
         raise ToolError("limit_reached", "Daily scan allowance exhausted (0 scans left today).",
                         "Stop. Resume after local midnight or ask the user to request a reset.")
@@ -423,6 +443,17 @@ async def start_scan(settings: Settings, resume_path: str, job_title: str, compa
                                    scoring_guide, resume_sha, jd_sha, step, known_ids)
     return StartScanResult(scan_id=scan_id, reused=False, state=state,
                            scans_remaining=await _remaining_on_scan_page(page, settings, step))
+
+
+async def _shows_filename(headings, basename: str, timeout_s: float = 10.0) -> bool:
+    """§9 filename check, polled until the (possibly truncated) name shows up or the landmark timeout passes."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while True:
+        if any(displayed_name_matches(t, basename) for t in await headings.all_inner_texts()):
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(0.25)
 
 
 async def _visible(locator, timeout_ms: int = 10_000) -> bool:
@@ -471,9 +502,10 @@ async def _submit(page: Page, settings: Settings, path: Path, title: str, compan
         if not await upload.count():
             raise await site_changed_error(page, settings, step, "Resume file input")
         await upload.first.set_input_files(str(path))
-        await landmark(page.get_by_role("button", name="Remove file", exact=True), "Uploaded file (Remove file control)")
-        shown = await page.get_by_role("heading", level=3).all_inner_texts()
-        if not any(displayed_name_matches(text, path.name) for text in shown):  # §9: verify the uploaded basename
+        remove = await landmark(page.get_by_role("button", name="Remove file", exact=True),
+                                "Uploaded file (Remove file control)")
+        # The filename h3 is the Remove button's sibling; it may render a beat later, so wait like other landmarks.
+        if not await _shows_filename(remove.locator("xpath=..").get_by_role("heading", level=3), path.name):
             raise await site_changed_error(page, settings, step, f"Uploaded filename '{path.name}' (not displayed)")
         scan_button = await landmark(page.get_by_role("button", name="Scan Resume", exact=True), "Scan Resume button")
 
@@ -532,6 +564,7 @@ async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -
         raise ToolError("invalid_input", f"Scan {scan_id} is the latest loop result (feedback backed up).",
                         "Pass confirm=true to delete it anyway.")
 
+    check_budget(ledger)  # §7.6 backup is done; the deletion itself counts
     page_num = await _find_page(page, settings, scan_id, step)
     href = SUMMARY_PATH.format(scan_id)
     row = page.locator("li").filter(has=page.locator(f'a[href="{href}"]')).first

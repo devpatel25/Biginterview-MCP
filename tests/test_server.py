@@ -104,3 +104,50 @@ def test_lifespan_releases_browser_profile(monkeypatch, fail):
         asyncio.run(go())
     assert closed  # scripts/login.py can use the profile afterwards
     assert server.mcp._lifespan is server.lifespan  # and it is the lifespan the app runs with
+
+
+def test_read_tools_retry_network_error_then_succeed(monkeypatch):
+    calls = []
+
+    async def flaky(settings, scan_id):
+        calls.append(1)
+        if len(calls) < 3:
+            raise ToolError("network_error", "net::ERR_CONNECTION_RESET", "retry")
+        from resumeai_mcp.schemas import ScanStatus
+        return ScanStatus(scan_id=scan_id, state="complete", scans_remaining=4,
+                          checked_at=datetime(2026, 9, 28, tzinfo=timezone.utc))
+
+    async def no_delay(settings):
+        pass
+
+    monkeypatch.setattr(scans, "get_scan_status", flaky)
+    monkeypatch.setattr(server, "human_delay", no_delay)
+    body = _call("get_scan_status", {"scan_id": "1"})
+    assert body["ok"] is True and len(calls) == 3  # 1 try + 2 retries (§13)
+
+
+def test_read_retries_are_bounded(monkeypatch):
+    calls = []
+
+    async def down(settings, limit, cursor):
+        calls.append(1)
+        raise ToolError("network_error", "down", "retry")
+
+    async def no_delay(settings):
+        pass
+
+    monkeypatch.setattr(scans, "list_scans", down)
+    monkeypatch.setattr(server, "human_delay", no_delay)
+    assert _call("list_scans")["error"]["code"] == "network_error" and len(calls) == 3
+
+
+def test_write_tools_never_auto_retry(monkeypatch):
+    calls = []
+
+    async def down(*a, **kw):
+        calls.append(1)
+        raise ToolError("network_error", "down", "retry")
+
+    monkeypatch.setattr(scans, "start_scan", down)
+    body = _call("start_scan", {"resume_path": "/r.pdf", "job_title": "T", "company": "C", "job_description": "J"})
+    assert body["error"]["code"] == "network_error" and len(calls) == 1  # a retry could double-submit
