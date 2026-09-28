@@ -177,7 +177,19 @@ def has_extractable_text(path: Path) -> bool:
             raw = zlib.decompress(raw)
         except zlib.error:
             pass
-        if PDF_TEXT_OP.search(raw):
+        if any(_shows_something(m.group(0)) for m in PDF_TEXT_OP.finditer(raw)):
+            return True
+    return False
+
+
+def _shows_something(op: bytes) -> bool:
+    """A text operation that draws more than whitespace: a literal with a non-space char, or a hex string with a
+    byte other than NUL/whitespace (single-byte or CID-padded)."""
+    if any(b not in b" \t\r\n\f" for lit in re.findall(rb"\(((?:\\.|[^\\)])*)\)", op) for b in lit):
+        return True
+    for hexstr in re.findall(rb"<([0-9A-Fa-f\s]*)>", op):
+        digits = re.sub(rb"\s", b"", hexstr)
+        if any(digits[i:i + 2].lower() not in (b"00", b"09", b"0a", b"0d", b"20") for i in range(0, len(digits), 2)):
             return True
     return False
 

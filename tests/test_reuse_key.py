@@ -146,6 +146,10 @@ def _docx(tmp_path, name, body):
     (b"BT /F1 11 Tf (Line two) ' ET", True),                   # ' operator
     (b"BT /F1 11 Tf () Tj ET", False),                          # empty string shows nothing
     (b"BT /F1 11 Tf <> Tj ET", False),
+    (b"BT /F1 11 Tf (   ) Tj ET", False),                       # whitespace-only literal
+    (b"BT /F1 11 Tf <202020> Tj ET", False),                    # whitespace-only hex
+    (b"BT /F1 11 Tf [(  ) -20 <20>] TJ ET", False),
+    (b"BT /F1 11 Tf [(  ) -20 (Hi)] TJ ET", True),
     (IMAGE_OPS, False),
 ])
 def test_pdf_text_operators(tmp_path, ops, expected):
