@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# resumeai-mcp (PLAN.md §17): browser profile = login material, snapshots = PII
+resumeai-profile/
+*.html
