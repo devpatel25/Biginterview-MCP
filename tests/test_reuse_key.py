@@ -63,11 +63,7 @@ def test_extractable_text(tmp_path):
         assert has_extractable_text(tmp_path / name), name
     (tmp_path / "image.pdf").write_bytes(_pdf(IMAGE_OPS, compress=True))
     assert not has_extractable_text(tmp_path / "image.pdf")
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("word/document.xml", '<w:document><w:body><w:p><w:r><w:t>Jane Doe</w:t></w:r></w:p></w:body></w:document>')
-    (tmp_path / "ok.docx").write_bytes(buf.getvalue())
-    assert has_extractable_text(tmp_path / "ok.docx")
+    assert has_extractable_text(_docx(tmp_path, "ok.docx", "<w:p><w:r><w:t>Jane Doe</w:t></w:r></w:p>"))
     (tmp_path / "broken.docx").write_bytes(b"not a zip")
     assert not has_extractable_text(tmp_path / "broken.docx")
 
@@ -130,3 +126,37 @@ def test_find_new_row_never_captures_a_row_listed_before_the_click():
     assert find_new_row([old], "resume.pdf", "AI Intern", t0, {"2"}) is None
     new = _row(3, "resume.pdf", "AI Intern", t0 + timedelta(seconds=10))
     assert find_new_row([new, old], "resume.pdf", "AI Intern", t0, {"2"})["id"] == "3"
+
+
+W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+
+def _docx(tmp_path, name, body):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", f"<w:document {W}><w:body>{body}</w:body></w:document>")
+    (tmp_path / name).write_bytes(buf.getvalue())
+    return tmp_path / name
+
+
+@pytest.mark.parametrize("ops,expected", [
+    (b"BT /F1 11 Tf <48656C6C6F20576F726C64> Tj ET", True),   # hex string (pdftotext: "Hello World")
+    (b"BT /F1 11 Tf [(Hel) -20 (lo)] TJ ET", True),            # TJ array
+    (b"BT /F1 11 Tf [<0048> 12 <0065>] TJ ET", True),          # CID-font hex array
+    (b"BT /F1 11 Tf (Line two) ' ET", True),                   # ' operator
+    (b"BT /F1 11 Tf () Tj ET", False),                          # empty string shows nothing
+    (b"BT /F1 11 Tf <> Tj ET", False),
+    (IMAGE_OPS, False),
+])
+def test_pdf_text_operators(tmp_path, ops, expected):
+    for compress in (False, True):
+        p = tmp_path / f"t{int(compress)}.pdf"
+        p.write_bytes(_pdf(ops, compress))
+        assert has_extractable_text(p) is expected, (ops, compress)
+
+
+def test_docx_text_nodes_not_attributes(tmp_path):
+    empty = _docx(tmp_path, "empty.docx", '<w:p><w:r><w:t xml:space="preserve">  </w:t></w:r></w:p>')
+    assert not has_extractable_text(empty)
+    full = _docx(tmp_path, "full.docx", '<w:p><w:r><w:t xml:space="preserve">Jane Doe</w:t></w:r></w:p>')
+    assert has_extractable_text(full)

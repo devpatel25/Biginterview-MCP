@@ -5,6 +5,7 @@ import re
 import uuid
 import zipfile
 import zlib
+from xml.etree import ElementTree
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -149,24 +150,34 @@ def strip_boilerplate(jd: str) -> str:
     return "\n\n".join(kept) or jd.strip()  # never send an empty JD because the heuristic ate it
 
 
-def has_extractable_text(path: Path) -> bool:
-    """Text-based PDF/DOCX check without extra deps (§7.3: image-only PDFs break extraction).
+# A text-showing operator with a non-empty operand: (literal) Tj/'/", <hex> Tj/'/", or a TJ array holding one.
+PDF_TEXT_OP = re.compile(
+    rb"(?:\((?:\\.|[^\\)])+\)|<\s*[0-9A-Fa-f][0-9A-Fa-f\s]*>)\s*(?:Tj|'|\")"
+    rb"|\[[^\]]*(?:\((?:\\.|[^\\)])+\)|<\s*[0-9A-Fa-f][0-9A-Fa-f\s]*>)[^\]]*\]\s*TJ")
+W_T = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
 
-    ponytail: PDF check = any (Flate-decoded) content stream with text-showing operators (Tj/TJ) and at least one
-    letter; misses exotic encodings — add pypdf if false negatives show up."""
+
+def has_extractable_text(path: Path) -> bool:
+    """Text-layer check without extra deps (§7.3: image-only PDFs break the site's extraction).
+
+    PDF: some (Flate-decoded) content stream shows a non-empty string (literal or hex; glyph encodings are not
+    decoded, since the question is "is there a text layer", not "what does it say"). DOCX: some w:t text node has
+    non-whitespace text.
+    ponytail: streams using filters other than Flate are skipped; add pypdf if real resumes get false negatives."""
     if path.suffix.lower() == ".docx":
         try:
             with zipfile.ZipFile(path) as z:
-                return bool(re.search(rb"<w:t[ >][^<]*[A-Za-z]", z.read("word/document.xml")))
-        except (zipfile.BadZipFile, KeyError, OSError):
+                root = ElementTree.fromstring(z.read("word/document.xml"))
+        except (zipfile.BadZipFile, KeyError, OSError, ElementTree.ParseError):
             return False
+        return any((node.text or "").strip() for node in root.iter(W_T))
     data = path.read_bytes()
     for raw in re.findall(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
         try:
             raw = zlib.decompress(raw)
         except zlib.error:
             pass
-        if re.search(rb"\((?=[^)]*[A-Za-z])[^)]*\)\s*Tj|\]\s*TJ", raw):
+        if PDF_TEXT_OP.search(raw):
             return True
     return False
 
