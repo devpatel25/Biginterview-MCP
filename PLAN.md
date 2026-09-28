@@ -860,7 +860,7 @@ reports `allowance_restored` truthfully. Tick every box.
 - A6. Single user, single machine (user's Mac), personal use.
 
 **Open questions for the user (do not block Phase 0–2):**
-- Q1. Should `RUNBOOK.md` live in this repo or in the Claude Code agent's own repo?
+- Q1. Should `RUNBOOK.md` live in this repo or in the Claude Code agent's own repo? **Answered 2026-09-28:** this repo (`RUNBOOK.md`, per §5).
 - Q2. Preferred location for `PROFILE_DIR` and `~/.resumeai-mcp/` on the Mac?
 - Q3. For Phase 5's dry run: which role/JD should be the pilot?
 
