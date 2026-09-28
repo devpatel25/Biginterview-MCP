@@ -107,12 +107,12 @@ RECOVERY_WINDOW = timedelta(minutes=10)  # §10.2
 # click are excluded by id (known_ids), so an older same-file/same-title row can never be captured.
 CLOCK_SKEW = timedelta(seconds=60)
 IN_FLIGHT_WINDOW = timedelta(minutes=15)  # §12: one scan in flight; older unfinished entries are stale
-# My Scans row `status` → §7.4 state. Only "success" is observed so far (2026-09-28); "failed"/"error" are the
-# site's explicit failure words. Anything else → unknown (never silently failed, §7.4).
-# ponytail: add the in-progress value seen during the Phase 3 live scan (expected "processing"/"pending").
+# My Scans row `status` → §7.4 state. Observed live 2026-09-28 (scan 690156): "parsing" → "analyzing" →
+# "success" in ~1 min. "failed"/"error" are the site's explicit failure words (not yet observed). The other
+# in-progress words are defensive. Anything else → unknown (never silently failed, §7.4).
 ROW_STATES: dict[str, ScanState] = {"success": "complete", "failed": "failed", "error": "failed",
-                                    "processing": "scanning", "scanning": "scanning", "pending": "queued",
-                                    "queued": "queued"}
+                                    "parsing": "scanning", "analyzing": "scanning", "processing": "scanning",
+                                    "scanning": "scanning", "pending": "queued", "queued": "queued"}
 # §7.3 heuristic JD cleanup: drop paragraphs that are EO / benefits / legal boilerplate, keep everything else.
 BOILERPLATE_RE = re.compile(
     r"equal (employment )?opportunity|\beeo\b|affirmative action|without regard to (race|sex|gender)|"

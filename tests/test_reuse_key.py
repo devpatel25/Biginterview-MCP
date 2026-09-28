@@ -101,6 +101,8 @@ def test_row_state_never_maps_unknown_to_failed():
     assert row_state({"status": "success"}) == "complete"
     assert row_state({"status": "failed"}) == "failed"
     assert row_state({"status": "processing"}) == "scanning"
+    assert row_state({"status": "parsing"}) == "scanning"  # observed live
+    assert row_state({"status": "analyzing"}) == "scanning"  # observed live
     assert row_state({"status": "something_new"}) == "unknown"
     assert row_state({}) == "unknown"
 
