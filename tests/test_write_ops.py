@@ -449,6 +449,7 @@ def test_budget_counts_todays_attempts_of_both_kinds():
     ledger = {f"attempt:{i}": {"attempt_id": str(i), "started_at": today.isoformat()} for i in range(10)}
     ledger["attempt:d1"] = {"attempt_id": "d1", "kind": "delete", "started_at": today.isoformat()}
     ledger["attempt:old"] = {"attempt_id": "old", "started_at": yesterday.isoformat()}
+    ledger["attempt:d1"]["target_scan_id"] = "2"
     ledger["2"] = {"scan_id": "2", "deleted_at": today.isoformat()}  # verified outcome; its attempt already counted
     assert scans.ops_today(ledger) == 11
     scans.check_budget(ledger)  # 11 < 12
@@ -545,3 +546,13 @@ def test_failure_after_delete_click_still_counts_toward_the_budget(site, tmp_pat
     with pytest.raises(ToolError) as e:  # the 12th operation happened (maybe) → the next one is blocked
         scans.check_budget(ledger)
     assert e.value.code == "limit_reached"
+
+
+def test_legacy_deletion_records_still_count_once():
+    today = datetime.now().astimezone().isoformat()
+    legacy = {"376501": {"scan_id": "376501", "deleted_at": today}}  # written by the pre-attempt code
+    assert scans.ops_today(legacy) == 1
+    new_format = {"attempt:d": {"attempt_id": "d", "kind": "delete", "target_scan_id": "5", "started_at": today},
+                  "5": {"scan_id": "5", "deleted_at": today}}
+    assert scans.ops_today(new_format) == 1  # attempt + outcome = one operation
+    assert scans.ops_today({**legacy, **new_format}) == 2

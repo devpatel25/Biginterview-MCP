@@ -282,7 +282,13 @@ def ops_today(ledger: dict, today=None) -> int:
     def on_today(value) -> bool:
         ts = _utc(value)
         return bool(ts) and ts.astimezone().date() == today
-    return sum(1 for k, e in ledger.items() if k.startswith("attempt:") and on_today(e.get("started_at")))
+    attempts = [e for k, e in ledger.items() if k.startswith("attempt:") and on_today(e.get("started_at"))]
+    attempted_deletes = {str(e.get("target_scan_id")) for e in attempts if e.get("kind") == "delete"}
+    # Ledgers written before delete attempts existed (≤ 619abff) record a deletion only as deleted_at: count those
+    # once, unless a delete attempt for the same scan already counted it.
+    legacy_deletes = sum(1 for e in ledger.values() if e.get("scan_id") and on_today(e.get("deleted_at"))
+                         and str(e["scan_id"]) not in attempted_deletes)
+    return len(attempts) + legacy_deletes
 
 
 def check_budget(ledger: dict) -> None:
