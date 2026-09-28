@@ -1,11 +1,12 @@
 """Pydantic v2 models for every tool input/output (PLAN.md §8). Phases 1/2."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel
 
 Medal = Literal["gold", "silver", "bronze"]
+MEDALS = get_args(Medal)
 
 # §13 error catalog.
 ErrorCode = Literal[
@@ -94,3 +95,27 @@ class ScanFeedback(BaseModel):
     partial: bool
     categories: Categories
     action_items: list[ActionItem]
+
+
+ScanState = Literal["queued", "scanning", "complete", "failed", "unknown"]
+
+
+class ScanStatus(BaseModel):  # §7.4
+    scan_id: str
+    state: ScanState
+    scans_remaining: int | None
+    checked_at: datetime
+
+
+class StartScanResult(BaseModel):  # §7.3
+    scan_id: str
+    reused: bool
+    state: Literal["queued", "scanning", "complete"]
+    scans_remaining: int | None
+
+
+class DeleteResult(BaseModel):  # §7.6
+    deleted: bool
+    backup_path: str
+    scans_remaining: int | None
+    allowance_restored: bool | None  # informational only; the loop must not depend on it

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from pydantic import ValidationError
 
 from .browser import goto, human_delay, new_page, snapshot
 from .config import Settings
@@ -127,16 +128,29 @@ async def fetch_page(page: Page, settings: Settings, path: str, step: str) -> st
     return content
 
 
-async def site_changed_error(page: Page, settings: Settings, step: str, what: str) -> ToolError:
-    """§13 site_changed with the snapshot already saved (§9 change-detection)."""
+async def site_changed_error(page: Page, settings: Settings, step: str, what: str,
+                             cause: Exception | None = None) -> ToolError:
+    """§13 site_changed with the snapshot already saved; names what is missing (§9 change-detection)."""
     async with site_errors(page, settings):
         path = await snapshot(page, settings, step)
-    return ToolError("site_changed", f"{what} not readable.", f"Stop. Inspect snapshot {path.name}; the parser needs a fix.")
+    # Our own ValueError/KeyError texts name the missing landmark/field; pydantic errors echo page values (PII).
+    reason = type(cause).__name__ if isinstance(cause, ValidationError) or cause is None else str(cause)[:120]
+    return ToolError("site_changed", f"{what} not readable ({reason}).",
+                     f"Stop. Inspect snapshot {path.name}; the parser needs a fix.")
 
 
 def parse_scans_remaining(text: str) -> int | None:
     m = REMAINING_RE.search(text)
     return int(m.group(1)) if m else None
+
+
+async def read_scans_remaining(page: Page, settings: Settings) -> int | None:
+    """The scan page's "N scans left today." counter (null when not rendered — never guessed)."""
+    counter = page.get_by_role("heading", name=REMAINING_RE)
+    async with site_errors(page, settings):
+        if await counter.count():
+            return parse_scans_remaining(await counter.first.inner_text())
+    return None
 
 
 async def auth_status(settings: Settings) -> AuthStatus:
@@ -147,10 +161,7 @@ async def auth_status(settings: Settings) -> AuthStatus:
         await raise_for_state(page, settings, state, "auth-status")
     remaining = None
     if state == LOGGED_IN:
-        counter = page.get_by_role("heading", name=REMAINING_RE)
-        async with site_errors(page, settings):
-            if await counter.count():
-                remaining = parse_scans_remaining(await counter.first.inner_text())
+        remaining = await read_scans_remaining(page, settings)
         if not on_portal(page.url, settings):  # redirected to SSO during the read → not logged in
             state, remaining = AUTH_EXPIRED, None
     return AuthStatus(

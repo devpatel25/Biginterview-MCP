@@ -10,11 +10,10 @@ import re
 from urllib.parse import urlparse
 
 from .auth import fetch_page, require_login, site_changed_error, site_errors
-from .browser import new_page, snapshot
+from .browser import new_page, react_props, snapshot
 from .config import Settings
-from .scans import MEDALS, react_props
-from .schemas import ActionItem, AtsFitCategory, Categories, Category, Criterion, ScanFeedback, ToolError
-from .storage import backup_feedback, load_ledger
+from .schemas import MEDALS, ActionItem, AtsFitCategory, Categories, Category, Criterion, ScanFeedback, ToolError
+from .storage import backup_feedback, load_ledger, update_ledger
 
 SUMMARY_APP = "ResumeAssignmentReviewSummaryApp"
 SUMMARY_PATH = "/members/resume_assignments/review_summary/{}"
@@ -117,13 +116,21 @@ def parse_feedback(page_html: str, scan_id: str, ledger_entry: dict | None = Non
     )
 
 
-async def get_scan_feedback(settings: Settings, scan_id: str) -> ScanFeedback:
-    """§7.5: read, parse, snapshot and back up the feedback of a completed scan."""
+def check_scan_id(scan_id) -> None:
     if not (isinstance(scan_id, str) and scan_id.isascii() and scan_id.isdigit() and len(scan_id) <= 12):
         raise ToolError("invalid_input", "scan_id must be the numeric id from list_scans.", "Re-run list_scans.")
+
+
+async def get_scan_feedback(settings: Settings, scan_id: str) -> ScanFeedback:
+    """§7.5: read, parse, snapshot and back up the feedback of a completed scan."""
+    check_scan_id(scan_id)
     page = await new_page(settings)
     await require_login(page, settings, f"{scan_id}-feedback")
-    ledger = load_ledger(settings)
+    return await read_feedback(page, settings, scan_id, load_ledger(settings))
+
+
+async def read_feedback(page, settings: Settings, scan_id: str, ledger: dict) -> ScanFeedback:
+    """get_scan_feedback after the login pre-check (shared with delete_scan's backup-first step)."""
     step = f"{scan_id}-feedback"
     content = await fetch_page(page, settings, SUMMARY_PATH.format(scan_id), step)
     # ponytail: unknown ids assumed to leave the review_summary/<id> URL (redirect/404) — unverified live;
@@ -133,8 +140,11 @@ async def get_scan_feedback(settings: Settings, scan_id: str) -> ScanFeedback:
     try:
         feedback = parse_feedback(content, scan_id, ledger.get(scan_id))
     except (ValueError, KeyError, TypeError, AttributeError) as e:
-        raise await site_changed_error(page, settings, step, f"Feedback page data ({type(e).__name__})") from e
+        raise await site_changed_error(page, settings, step, "Feedback page data", e) from e
     async with site_errors(page, settings):
         await snapshot(page, settings, step)  # §7.5: raw HTML kept locally (0600, purged after 30 days per §14)
     backup_feedback(settings, feedback)
+    if scan_id in ledger:  # §14 ledger columns
+        update_ledger(settings, scan_id, medal=feedback.medal, ats_badge=feedback.categories.ats_fit.badge,
+                      credibility_badge=feedback.categories.credibility.badge)
     return feedback

@@ -1,9 +1,11 @@
 """Playwright persistent-context lifecycle, human_delay, snapshots (PLAN.md §6, §12)."""
 
 import asyncio
+import json
 import os
 import random
 import socket
+from html.parser import HTMLParser
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
@@ -108,3 +110,26 @@ async def human_delay(settings: Settings) -> None:
 
 async def snapshot(page: Page, settings: Settings, name: str) -> Path:
     return storage.save_snapshot(settings, name, await page.content())
+
+
+class _PropsFinder(HTMLParser):
+    def __init__(self, app: str):
+        super().__init__()
+        self.app, self.props = app, None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if self.props is None and a.get("data-react-class") == self.app:
+            self.props = a.get("data-react-props")
+
+
+def react_props(html: str, app: str) -> dict:
+    """The JSON props of the portal's React app `app` (§9 amendment 2026-09-28). ValueError if absent."""
+    finder = _PropsFinder(app)
+    finder.feed(html)
+    if finder.props is None:
+        raise ValueError(f"{app} props not found")
+    props = json.loads(finder.props)
+    if not isinstance(props, dict):
+        raise TypeError(f"{app} props is not an object")
+    return props
