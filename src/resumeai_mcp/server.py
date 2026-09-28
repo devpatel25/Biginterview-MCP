@@ -68,7 +68,7 @@ async def lifespan(app):
 
 mcp = FastMCP("resumeai", lifespan=lifespan, middleware=[ArgumentErrorsAsEnvelope()], instructions=(
     "Big Interview ResumeAI scanner for the user's NEU account. Typical flow: auth_status → list_scans → "
-    "start_scan → get_scan_status every 20 s (max 10 min) → get_scan_feedback. " + PACING))
+    "start_scan → get_scan_status (no more often than every 20 s, max 10 min) → get_scan_feedback. " + PACING))
 settings = load_settings()
 
 
@@ -95,7 +95,7 @@ async def list_scans(limit: int = 20, cursor: str | None = None) -> dict:
     "scan exists for the same resume file, job description, scoring guide, job title and company, it is returned "
     "with reused=true and no allowance is used. resume_path must be an absolute path to a text-based .pdf/.docx "
     "(max 5 MB). Returns scan_id and state (queued/scanning; complete only when reused or already finished). Then "
-    "poll get_scan_status every 20 s. Only one scan may be in flight; limit_reached means stop for the day. "
+    "poll get_scan_status no more often than every 20 s. Only one scan may be in flight; limit_reached means stop for the day. "
     + PACING + " " + ERRORS))
 async def start_scan(resume_path: str, job_title: str, company: str, job_description: str,
                      scoring_guide: str = "Graduate - STEM Focus") -> dict:
@@ -104,8 +104,8 @@ async def start_scan(resume_path: str, job_title: str, company: str, job_descrip
 
 @mcp.tool(description=(
     "Poll a scan's state: queued, scanning, complete, failed (the site explicitly reported failure) or unknown "
-    "(unreadable — stop and investigate; it is NOT a failure; hint names the saved snapshot). Poll every 20 s at "
-    "most, give up after 10 minutes (treat as scan_timeout and keep the scan_id). Also returns scans_remaining. "
+    "(unreadable — stop and investigate; it is NOT a failure; hint names the saved snapshot). Poll no more often "
+    "than once every 20 s; give up after 10 minutes (treat as scan_timeout and keep the scan_id). Also returns scans_remaining. "
     + PACING + " " + ERRORS))
 async def get_scan_status(scan_id: str) -> dict:
     return await envelope(scans.get_scan_status(settings, scan_id))

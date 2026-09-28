@@ -79,3 +79,28 @@ def test_bad_argument_types_stay_in_envelope(name, args, field):
     body = _call(name, args)
     _assert_envelope(body)
     assert body["error"]["code"] == "invalid_input" and field in body["error"]["message"]
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_lifespan_releases_browser_profile(monkeypatch, fail):
+    """Our lifespan's cleanup on normal and exceptional exit. (Driven directly: FastMCP's in-memory transport may
+    cancel the server task before lifespan teardown, which would make an end-to-end assertion flaky.)"""
+    closed = []
+
+    async def fake_close():
+        closed.append(True)
+
+    monkeypatch.setattr(server, "close_context", fake_close)
+
+    async def go():
+        async with server.lifespan(server.mcp):
+            if fail:
+                raise RuntimeError("session crashed")
+
+    if fail:
+        with pytest.raises(RuntimeError):
+            asyncio.run(go())
+    else:
+        asyncio.run(go())
+    assert closed  # scripts/login.py can use the profile afterwards
+    assert server.mcp._lifespan is server.lifespan  # and it is the lifespan the app runs with
