@@ -10,10 +10,18 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from . import storage
 from .config import Settings, private_dir
+from .schemas import ToolError
 
 
-class ProfileInUseError(RuntimeError):
-    """Another browser (e.g. login.py) holds the persistent profile (§6.1)."""
+class ProfileInUseError(ToolError):
+    """Another browser (e.g. login.py) holds the persistent profile (§6.1, §13 profile_in_use)."""
+
+    def __init__(self, profile: Path):
+        super().__init__(
+            "profile_in_use",
+            f"Browser profile {profile} is in use (is scripts/login.py running?).",
+            "Close the other browser / login script, then retry.",
+        )
 
 
 def profile_in_use(profile_dir: Path) -> bool:
@@ -57,9 +65,7 @@ async def ensure_context(settings: Settings, headless: bool | None = None) -> Br
         private_dir(settings.data_dir)  # profile usually lives inside it; parents get default perms
         profile = private_dir(settings.profile_dir)
         if profile_in_use(profile):
-            raise ProfileInUseError(
-                f"Browser profile {profile} is in use (is scripts/login.py running?). Close it and retry."
-            )
+            raise ProfileInUseError(profile)
         pw = await async_playwright().start()
         try:
             ctx = await pw.chromium.launch_persistent_context(
