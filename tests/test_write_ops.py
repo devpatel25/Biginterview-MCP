@@ -495,3 +495,9 @@ def test_filename_heading_may_render_late(form, tmp_path, resume, monkeypatch):
     monkeypatch.setattr(FakeLocator, "all_inner_texts", late)
     assert _run(_submit(st, f, resume)) == ("310", "scanning")
     assert len(calls) >= 3
+
+
+def test_deleting_a_site_created_scan_counts_toward_the_budget():
+    ledger = {"376501": {"scan_id": "376501", "deleted_at": datetime.now(timezone.utc).isoformat()}}
+    assert scans.ops_today(ledger) == 1
+    assert scans.entry_key(ledger["376501"]) is None  # a bare deletion record is never reusable

@@ -594,8 +594,8 @@ async def delete_scan(settings: Settings, scan_id: str, confirm: bool = False) -
     rows = await _my_scans(page, settings, step, page_num)  # verify on reload
     if any(str(r.get("id")) == scan_id for r in rows):
         raise await site_changed_error(page, settings, step, f"Deletion of {scan_id} (row still listed)")
-    if scan_id in ledger:
-        update_ledger(settings, scan_id, deleted_at=datetime.now(timezone.utc).isoformat())
+    # Always ledgered (site-created scans too): the §12 daily budget counts every deletion.
+    update_ledger(settings, scan_id, scan_id=scan_id, deleted_at=datetime.now(timezone.utc).isoformat())
     after = await _remaining_on_scan_page(page, settings, step)
     return DeleteResult(deleted=True, backup_path=str(backup), scans_remaining=after,
                         allowance_restored=None if before is None or after is None else after > before)
