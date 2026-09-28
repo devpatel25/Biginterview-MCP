@@ -10,7 +10,7 @@ import argparse
 import asyncio
 import sys
 
-from resumeai_mcp.auth import SCAN_PATH, is_logged_in
+from resumeai_mcp.auth import LOGGED_IN, SCAN_PATH, login_state
 from resumeai_mcp.browser import close_context, goto, new_page, snapshot
 from resumeai_mcp.config import load_settings
 
@@ -22,8 +22,9 @@ async def main(check: bool) -> bool:
         if not check:
             await goto(page, settings, SCAN_PATH)
             await asyncio.to_thread(input, "Log in via SSO + Duo, then press ENTER here.")
-        ok = await is_logged_in(page, settings)
-        print(f"logged_in={str(ok).lower()}")
+        state = await login_state(page, settings)
+        ok = state == LOGGED_IN
+        print(f"logged_in={str(ok).lower()}" + ("" if ok else f" ({state})"))
         if not ok:
             print(f"snapshot: {await snapshot(page, settings, 'login-check')}")
         return ok
