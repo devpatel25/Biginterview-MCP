@@ -105,6 +105,7 @@ class ScanStatus(BaseModel):  # §7.4
     state: ScanState
     scans_remaining: int | None
     checked_at: datetime
+    hint: str | None = None  # §7.4 amendment 2026-09-28: set only for state=unknown (names the snapshot)
 
 
 class StartScanResult(BaseModel):  # §7.3

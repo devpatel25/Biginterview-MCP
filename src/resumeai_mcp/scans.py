@@ -14,7 +14,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from .auth import SCAN_PATH, auth_expired_error, fetch_page, on_portal, read_scans_remaining, require_login, \
     site_changed_error, site_errors
-from .browser import human_delay, new_page, react_props, site_operation
+from .browser import human_delay, new_page, react_props, site_operation, snapshot
 from .config import Settings
 from .feedback import SUMMARY_APP, SUMMARY_PATH, check_scan_id, read_feedback
 from .schemas import MEDALS, DeleteResult, ScanList, ScanState, ScanStatus, ScanSummary, StartScanResult, ToolError
@@ -289,10 +289,13 @@ async def get_scan_status(settings: Settings, scan_id: str) -> ScanStatus:
     state, medal = await _state_of(page, settings, scan_id, rows, ledger, step)
     if state == "complete":
         _record_completion(settings, ledger, scan_id, medal)
-    if state == "unknown":
-        await site_changed_error(page, settings, step, "Scan row")  # saves the snapshot §7.4 asks for
+    hint = None
+    if state == "unknown":  # §7.4: snapshot + a hint to inspect it; unknown is "stop and investigate", not failure
+        async with site_errors(page, settings):
+            path = await snapshot(page, settings, step)
+        hint = f"Stop and investigate (not a failure): inspect snapshot {path.name} and My Scans."
     return ScanStatus(scan_id=scan_id, state=state, scans_remaining=remaining,
-                      checked_at=datetime.now().astimezone())
+                      checked_at=datetime.now().astimezone(), hint=hint)
 
 
 def _recover_attempts(settings: Settings, ledger: dict, rows: list[dict]) -> list[str]:

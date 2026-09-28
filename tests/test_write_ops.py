@@ -42,6 +42,9 @@ class FakeSite:
         self.rows, self.remaining, self.summaries, self.loads = rows, remaining, summaries or {}, []
         self.url = "https://portal.test/members/resume_assignments/scan"
 
+    async def content(self):
+        return "<html>page</html>"
+
 
 @pytest.fixture
 def site(monkeypatch):
@@ -108,7 +111,13 @@ def test_status_complete_records_completion_in_ledger(site, tmp_path):
                                           ("brand_new_value", "unknown")])
 def test_status_mapping(site, tmp_path, status, state):
     site([row(100, status=status)])
-    assert _run(scans.get_scan_status(_settings(tmp_path), "100")).state == state
+    s = _run(scans.get_scan_status(_settings(tmp_path), "100"))
+    assert s.state == state
+    if state == "unknown":  # §7.4: snapshot saved and named in the hint
+        assert "inspect snapshot 100-status-" in s.hint
+        assert list((tmp_path / "data" / "snapshots").glob("100-status-*.html"))
+    else:
+        assert s.hint is None
 
 
 def test_status_older_scan_reads_its_summary_page_and_records_medal(site, tmp_path):

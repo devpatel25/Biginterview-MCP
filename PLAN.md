@@ -374,6 +374,8 @@ Error codes are catalogued in §13.
   (in-progress values to be confirmed during the first live scan); anything else → `unknown`. An id
   neither the site nor the ledger knows → `not_found`; one only the ledger knows → `unknown`. On
   `complete` the ledger entry gets `completed_at` + `medal`.
+- **Amendment 2026-09-28 (user-approved):** success `data` gains `hint: string | null` — set only when
+  `state="unknown"`, naming the saved snapshot to inspect; null otherwise.
 - **Pacing note in description:** "Poll no more than once every 20 seconds."
 
 ### 7.5 `get_scan_feedback(scan_id: string)`
