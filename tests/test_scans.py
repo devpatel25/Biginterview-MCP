@@ -223,3 +223,15 @@ def test_content_redirects_to_sso_while_reading_is_auth_expired(fake_site, tmp_p
 
     page.content = content
     assert _code(_settings(tmp_path)) == "auth_expired"
+
+
+def test_content_returns_login_page_mid_redirect_is_auth_expired(fake_site, tmp_path):
+    page = fake_site(5)
+
+    async def content():
+        page.url = IDP  # redirect completes during the read; content() succeeds with the login page
+        return "<html><body>Sign in</body></html>"
+
+    page.content = content
+    assert _code(_settings(tmp_path)) == "auth_expired"
+    assert not (tmp_path / "snapshots").exists()  # not misreported as site_changed

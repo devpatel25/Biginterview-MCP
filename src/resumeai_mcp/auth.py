@@ -125,6 +125,8 @@ async def auth_status(settings: Settings) -> AuthStatus:
         async with site_errors(page, settings):
             if await counter.count():
                 remaining = parse_scans_remaining(await counter.first.inner_text())
+        if not on_portal(page.url, settings):  # redirected to SSO during the read → not logged in
+            state, remaining = AUTH_EXPIRED, None
     return AuthStatus(
         logged_in=state == LOGGED_IN,
         scans_remaining=remaining,

@@ -88,10 +88,12 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
                 await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
             except PlaywrightTimeoutError:
                 pass  # classified below: off-portal → auth_expired, on-portal with no props → site_changed
-        if not on_portal(page.url, settings):  # session died after the pre-check (SSO redirect)
-            await raise_for_state(page, settings, AUTH_EXPIRED, step)
         async with site_errors(page, settings):  # page may redirect/close while being read
             content = await page.content()
+        # URL checked *after* the read: a redirect that lands mid-read must be auth_expired, not a
+        # login page misparsed as site_changed. Session died after the pre-check → SSO redirect.
+        if not on_portal(page.url, settings):
+            await raise_for_state(page, settings, AUTH_EXPIRED, step)
         try:
             site_rows, pagination = parse_my_scans(content)
             if site_rows and pagination.get("from") != (page_num - 1) * PAGE_SIZE + 1:

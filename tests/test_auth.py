@@ -152,3 +152,15 @@ def test_auth_status_counter_failure_on_sso_is_auth_expired(monkeypatch, fail_at
     with pytest.raises(ToolError) as e:
         _auth_status(monkeypatch, CounterPage(fail_at, url=IDP))
     assert e.value.code == "auth_expired"
+
+
+def test_auth_status_redirect_during_counter_read_is_logged_out(monkeypatch):
+    page = CounterPage(fail_at=None)
+
+    async def count():
+        page.url = IDP  # redirect lands mid-read; login page has no counter
+        return 0
+
+    page.count = count
+    s = _auth_status(monkeypatch, page)
+    assert s.logged_in is False and s.scans_remaining is None
