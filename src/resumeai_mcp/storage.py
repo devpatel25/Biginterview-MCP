@@ -33,8 +33,13 @@ def save_snapshot(settings: Settings, name: str, html: str) -> Path:
     return Path(path)
 
 
+def ledger_key(entry: dict) -> str:
+    """scan_id, or "attempt:<id>" for a submitted scan whose id was not captured yet (§10.2)."""
+    return str(entry["scan_id"]) if entry.get("scan_id") is not None else f"attempt:{entry['attempt_id']}"
+
+
 def load_ledger(settings: Settings) -> dict[str, dict]:
-    """Read ledger.jsonl into {scan_id: entry}. Append-only: a later line for a scan_id wins (§14)."""
+    """Read ledger.jsonl into {ledger_key: entry}. Append-only: a later line for the same key wins (§14)."""
     path = settings.data_dir / "ledger.jsonl"
     entries: dict[str, dict] = {}
     try:
@@ -42,7 +47,7 @@ def load_ledger(settings: Settings) -> dict[str, dict]:
             for line in f:
                 if line.strip():
                     entry = json.loads(line)
-                    entries[str(entry["scan_id"])] = entry
+                    entries[ledger_key(entry)] = entry
     except FileNotFoundError:
         return {}
     except (OSError, ValueError, KeyError, TypeError) as e:
@@ -51,6 +56,37 @@ def load_ledger(settings: Settings) -> dict[str, dict]:
             "Inspect or repair ledger.jsonl; do not delete scans until it reads cleanly.",
         ) from e
     return entries
+
+
+def append_ledger(settings: Settings, entry: dict) -> None:
+    """Append one full entry (0600 file, O_APPEND, fsync'd): the ledger is the only record of MCP-created scans."""
+    try:
+        private_dir(settings.data_dir)
+        fd = os.open(settings.data_dir / "ledger.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        raise ToolError("storage_error", f"Cannot write ledger.jsonl ({type(e).__name__}).",
+                        "Stop. Fix DATA_DIR permissions/space before any further scan operation.") from e
+
+
+def update_ledger(settings: Settings, key: str, **fields) -> dict:
+    """Append `key`'s entry merged with `fields` (append-only update; the later line wins)."""
+    entry = {**load_ledger(settings).get(key, {}), **fields}
+    append_ledger(settings, entry)
+    return entry
+
+
+def feedback_backup(settings: Settings, scan_id: str) -> Path | None:
+    """Existing backup path if it re-validates as ScanFeedback (§14 re-verify before delete), else None."""
+    path = settings.data_dir / "feedback" / f"{scan_id}.json"
+    try:
+        ScanFeedback.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return path
 
 
 def backup_feedback(settings: Settings, feedback: ScanFeedback) -> Path:

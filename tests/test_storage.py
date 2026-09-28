@@ -34,3 +34,19 @@ def test_same_second_snapshots_do_not_collide(tmp_path):
     a, b = save_snapshot(s, "x", "one"), save_snapshot(s, "x", "two")
     assert a != b
     assert (a.read_text(), b.read_text()) == ("one", "two")
+
+
+def test_ledger_append_update_and_attempt_keys(tmp_path):
+    from resumeai_mcp.storage import append_ledger, load_ledger, update_ledger
+    s = _settings(tmp_path / "data")
+    old = os.umask(0o022)
+    try:
+        append_ledger(s, {"scan_id": None, "attempt_id": "a1", "resume_filename": "r.pdf"})
+        append_ledger(s, {"scan_id": "7", "medal": None})
+        update_ledger(s, "7", medal="gold")
+    finally:
+        os.umask(old)
+    ledger = load_ledger(s)
+    assert set(ledger) == {"attempt:a1", "7"} and ledger["7"]["medal"] == "gold"
+    assert _mode(s.data_dir / "ledger.jsonl") == 0o600 and _mode(s.data_dir) == 0o700
+    assert len((s.data_dir / "ledger.jsonl").read_text().splitlines()) == 3  # append-only
