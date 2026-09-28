@@ -261,6 +261,11 @@ Every tool returns exactly one of these two shapes. There are no bare payloads a
 
 Error codes are catalogued in §13.
 
+**Amendment 2026-09-28 (Phase 4):** argument-type failures caught by the MCP framework before tool code
+runs are also returned in this envelope (`invalid_input`, naming the offending argument(s) but never their
+values); anything outside the §13 catalog is `internal_error` (exception type only, details on the
+server's stderr log). Tools run one at a time (shared browser page).
+
 ### 7.1 `auth_status()`
 
 - **Purpose:** Check login state and remaining daily allowance *before* starting work.
@@ -706,9 +711,10 @@ accounts, or exceeding what the site's own UI permits a human to do.
 | `storage_error` | Local ledger/backup failed | STOP — never delete a scan whose feedback isn't backed up. |
 | `profile_in_use` | Browser profile locked by another process (e.g. `scripts/login.py` running, §6.1) | STOP. Tell user to close the other browser/login script, then retry. |
 | `network_error` | Portal unreachable / navigation failed (connection, DNS, browser closed) — not an SSO redirect, not selector drift. *Amendment 2026-09-28.* | Retry up to 2x with the 2–5 s delay (per retry policy), then STOP and report. |
+| `internal_error` | Unexpected failure outside the catalog (e.g. browser launch fails, Chrome missing, a bug). Message carries the exception type only; details go to the server's stderr log. *Amendment 2026-09-28, user-approved.* | STOP and report. Never retried blindly. |
 
 Retry policy: at most **2 retries** per failing call, with the 2–5 s human delay between them.
-`auth_expired`, `site_changed`, `unknown_state`, and `profile_in_use` are never retried blindly.
+`auth_expired`, `site_changed`, `unknown_state`, `profile_in_use`, and `internal_error` are never retried blindly.
 
 ---
 
