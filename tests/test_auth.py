@@ -2,10 +2,13 @@
 
 import asyncio
 
+import pytest
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from resumeai_mcp.auth import AUTH_EXPIRED, LOGGED_IN, SCAN_PATH, SITE_CHANGED, login_state
 from resumeai_mcp.config import Settings
+from resumeai_mcp.schemas import ToolError
 
 BASE = "https://portal.test"
 DASHBOARD = BASE + "/members/interview_dashboard/"
@@ -19,7 +22,7 @@ SETTINGS = Settings(
 
 
 class FakePage:
-    """Each goto() lands on the next URL in `landings`; a URL of None means that goto times out."""
+    """Each goto() lands on the next URL in `landings`; None = goto times out; (url, exc) = land on url, raise exc."""
 
     def __init__(self, landings, landmark=True):
         self.landings = list(landings)
@@ -30,6 +33,9 @@ class FakePage:
         landing = self.landings.pop(0)
         if landing is None:
             raise PlaywrightTimeoutError("goto timeout")
+        if isinstance(landing, tuple):
+            self.url, exc = landing
+            raise exc
         self.url = landing
 
     async def wait_for_url(self, pred):
@@ -78,3 +84,14 @@ def test_parse_scans_remaining():
     assert parse_scans_remaining("0 scans remaining") == 0
     assert parse_scans_remaining("1 scan left") == 1
     assert parse_scans_remaining("Scan limit resets daily") is None
+
+
+def test_connection_failure_raises_network_error():
+    with pytest.raises(ToolError) as e:
+        state(FakePage([("chrome-error://chromewebdata/", PlaywrightError("net::ERR_NAME_NOT_RESOLVED"))]))
+    assert e.value.code == "network_error"
+    assert "ERR_NAME_NOT_RESOLVED" in e.value.message
+
+
+def test_nav_error_on_idp_is_auth_expired():
+    assert state(FakePage([(IDP, PlaywrightError("net::ERR_ABORTED"))])) == AUTH_EXPIRED

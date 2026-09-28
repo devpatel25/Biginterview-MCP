@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from resumeai_mcp import scans
@@ -70,13 +71,17 @@ IDP = "https://login.idp.test/saml"
 
 
 class FakePage:
-    """goto(?page=N) lands on PORTAL and serves page N, unless `on_goto` overrides (url, raise_timeout, html)."""
+    """goto(?page=N) lands on PORTAL and serves page N, unless `on_goto` overrides (url, error, html).
+
+    error: False, True (timeout), or an exception instance to raise from goto()."""
 
     def __init__(self, total, on_goto=None):
         self.total, self.on_goto, self.loaded = total, on_goto, []
-        self.url, self.html = PORTAL, ""
+        self.url, self.html, self.content_error = PORTAL, "", None
 
     async def content(self):
+        if self.content_error:
+            raise self.content_error
         return self.html
 
 
@@ -102,7 +107,7 @@ def fake_site(monkeypatch):
             if p.html is None:
                 p.html = _page_html(n, p.total)
             if timeout:
-                raise PlaywrightTimeoutError("goto timeout")
+                raise timeout if isinstance(timeout, Exception) else PlaywrightTimeoutError("goto timeout")
 
         monkeypatch.setattr(scans, "new_page", new_page)
         monkeypatch.setattr(scans, "require_login", require_login)
@@ -147,7 +152,7 @@ def test_cursor_past_end(fake_site, tmp_path):
 
 @pytest.mark.parametrize("kw", [
     {"limit": 0}, {"limit": 51}, {"limit": None}, {"limit": True}, {"limit": "5"},
-    {"cursor": "abc"}, {"cursor": "-1"}, {"cursor": 3}, {"cursor": "\u00b2"},
+    {"cursor": "abc"}, {"cursor": "-1"}, {"cursor": 3}, {"cursor": "\u00b2"}, {"cursor": "9" * 5000},
 ])
 def test_invalid_input(kw, tmp_path):
     assert _code(_settings(tmp_path), **kw) == "invalid_input"
@@ -188,3 +193,19 @@ def test_malformed_row_is_site_changed(fake_site, tmp_path, attributes):
     bad = f'<div data-react-class="{scans.SCANS_APP}" data-react-props="{html.escape(json.dumps(props))}"></div>'
     fake_site(1, on_goto=lambda n: (PORTAL, False, bad))
     assert _code(_settings(tmp_path)) == "site_changed"
+
+
+def test_connection_failure_is_network_error(fake_site, tmp_path):
+    fake_site(5, on_goto=lambda n: ("chrome-error://chromewebdata/", PlaywrightError("net::ERR_CONNECTION_REFUSED"), ""))
+    assert _code(_settings(tmp_path)) == "network_error"
+
+
+def test_nav_error_on_sso_host_is_auth_expired(fake_site, tmp_path):
+    fake_site(5, on_goto=lambda n: (IDP, PlaywrightError("net::ERR_ABORTED"), ""))
+    assert _code(_settings(tmp_path)) == "auth_expired"
+
+
+def test_content_failure_is_network_error(fake_site, tmp_path):
+    page = fake_site(5)
+    page.content_error = PlaywrightError("Target page, context or browser has been closed")
+    assert _code(_settings(tmp_path)) == "network_error"

@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from urllib.parse import urlparse
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
@@ -28,10 +29,25 @@ def on_portal(url: str, settings: Settings) -> bool:
     return u.hostname == urlparse(settings.base_url).hostname and u.path.startswith("/members/")
 
 
+def sso_redirect(url: str, settings: Settings) -> bool:
+    """True when the browser sits on some other web host (IdP / login page), not on a browser error page."""
+    u = urlparse(url)
+    return u.scheme in ("http", "https") and not on_portal(url, settings)
+
+
+def network_error(e: PlaywrightError) -> ToolError:
+    """§13 network_error (amendment 2026-09-28): transport failure, not an auth or selector problem."""
+    detail = (e.message or type(e).__name__).splitlines()[0][:200]  # e.g. net::ERR_NAME_NOT_RESOLVED + portal URL
+    return ToolError("network_error", f"Portal unreachable or navigation failed: {detail}",
+                     "Retry up to 2x with the 2-5 s delay; if it persists, stop and report.")
+
+
 async def login_state(page: Page, settings: Settings) -> str:
     """Load the scan page; return LOGGED_IN, AUTH_EXPIRED or SITE_CHANGED.
 
-    Playwright timeouts are classified, never raised; other errors propagate.
+    Playwright timeouts are classified, never raised. Other Playwright errors (connection, DNS,
+    browser closed) become AUTH_EXPIRED if the browser is on an SSO/login host, else ToolError
+    network_error.
     The portal's own session cookie is session-scoped, so a fresh browser is bounced
     through SAML SSO, which re-authenticates silently while the IdP session is alive and
     then lands on the dashboard rather than the requested page. So: wait for the redirect
@@ -47,6 +63,10 @@ async def login_state(page: Page, settings: Settings) -> str:
         await page.get_by_role("heading", name=SCAN_LANDMARK, exact=True).wait_for(state="visible")
     except PlaywrightTimeoutError:
         return SITE_CHANGED if on_portal(page.url, settings) else AUTH_EXPIRED
+    except PlaywrightError as e:
+        if sso_redirect(page.url, settings):
+            return AUTH_EXPIRED
+        raise network_error(e) from e
     return LOGGED_IN if on_portal(page.url, settings) else AUTH_EXPIRED
 
 

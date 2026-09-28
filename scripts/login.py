@@ -13,6 +13,7 @@ import sys
 from resumeai_mcp.auth import LOGGED_IN, SCAN_PATH, login_state
 from resumeai_mcp.browser import close_context, goto, new_page, snapshot
 from resumeai_mcp.config import load_settings
+from resumeai_mcp.schemas import ToolError
 
 
 async def main(check: bool) -> bool:
@@ -22,7 +23,11 @@ async def main(check: bool) -> bool:
         if not check:
             await goto(page, settings, SCAN_PATH)
             await asyncio.to_thread(input, "Log in via SSO + Duo, then press ENTER here.")
-        state = await login_state(page, settings)
+        try:
+            state = await login_state(page, settings)
+        except ToolError as e:  # network_error: nothing useful to snapshot
+            print(f"logged_in=false ({e.code}: {e.message})")
+            return False
         ok = state == LOGGED_IN
         print(f"logged_in={str(ok).lower()}" + ("" if ok else f" ({state})"))
         if not ok:

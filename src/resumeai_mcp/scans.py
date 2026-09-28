@@ -3,9 +3,10 @@
 import json
 from html.parser import HTMLParser
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from .auth import AUTH_EXPIRED, on_portal, raise_for_state, require_login
+from .auth import AUTH_EXPIRED, network_error, on_portal, raise_for_state, require_login, sso_redirect
 from .browser import goto, human_delay, new_page, snapshot
 from .config import Settings
 from .schemas import ScanList, ScanSummary, ToolError
@@ -67,7 +68,9 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
     """§7.2 / §10.3. cursor is the absolute row offset as a string (opaque to the agent)."""
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
         raise ToolError("invalid_input", "limit must be an integer 1-50.", "Retry with 1 <= limit <= 50.")
-    if cursor is not None and not (isinstance(cursor, str) and cursor.isascii() and cursor.isdigit()):
+    if cursor is not None and not (
+        isinstance(cursor, str) and cursor.isascii() and cursor.isdigit() and len(cursor) <= 9
+    ):
         raise ToolError("invalid_input", "Malformed cursor.", "Pass next_cursor exactly as returned, or null.")
     offset = int(cursor or 0)
     page = await new_page(settings)
@@ -81,14 +84,23 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
         page_num = n // PAGE_SIZE + 1
         step = f"list-scans-p{page_num}"
         await human_delay(settings)
+        nav_error = None
         try:
             await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
         except PlaywrightTimeoutError:
             pass  # classified below: off-portal → auth_expired, on-portal with no props → site_changed
+        except PlaywrightError as e:
+            nav_error = e
+        if nav_error is not None and not sso_redirect(page.url, settings):
+            raise network_error(nav_error) from nav_error
         if not on_portal(page.url, settings):  # session died after the pre-check (SSO redirect)
             await raise_for_state(page, settings, AUTH_EXPIRED, step)
         try:
-            site_rows, pagination = parse_my_scans(await page.content())
+            content = await page.content()
+        except PlaywrightError as e:  # page navigating away / closed
+            raise network_error(e) from e
+        try:
+            site_rows, pagination = parse_my_scans(content)
             if site_rows and pagination.get("from") != (page_num - 1) * PAGE_SIZE + 1:
                 raise ValueError("page size changed")
             chunk = site_rows[n - (page_num - 1) * PAGE_SIZE:][: limit - len(scans)]
