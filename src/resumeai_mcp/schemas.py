@@ -10,7 +10,7 @@ Medal = Literal["gold", "silver", "bronze"]
 # §13 error catalog.
 ErrorCode = Literal[
     "auth_expired", "limit_reached", "scan_failed", "scan_timeout", "unknown_state", "not_found",
-    "site_changed", "invalid_input", "storage_error", "profile_in_use",
+    "site_changed", "invalid_input", "storage_error", "profile_in_use", "network_error",
 ]
 
 

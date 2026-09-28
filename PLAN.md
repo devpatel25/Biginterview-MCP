@@ -639,6 +639,7 @@ accounts, or exceeding what the site's own UI permits a human to do.
 | `invalid_input` | Bad file, unknown scoring guide, empty JD, feedback requested on incomplete scan, etc. | Fix inputs, retry once. |
 | `storage_error` | Local ledger/backup failed | STOP — never delete a scan whose feedback isn't backed up. |
 | `profile_in_use` | Browser profile locked by another process (e.g. `scripts/login.py` running, §6.1) | STOP. Tell user to close the other browser/login script, then retry. |
+| `network_error` | Portal unreachable / navigation failed (connection, DNS, browser closed) — not an SSO redirect, not selector drift. *Amendment 2026-09-28.* | Retry up to 2x with the 2–5 s delay (per retry policy), then STOP and report. |
 
 Retry policy: at most **2 retries** per failing call, with the 2–5 s human delay between them.
 `auth_expired`, `site_changed`, `unknown_state`, and `profile_in_use` are never retried blindly.
