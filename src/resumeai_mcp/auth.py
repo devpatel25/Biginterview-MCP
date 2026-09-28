@@ -22,6 +22,12 @@ AUTH_EXPIRED = "auth_expired"  # §13
 SITE_CHANGED = "site_changed"  # §13
 
 
+def on_portal(url: str, settings: Settings) -> bool:
+    """True when `url` is an authenticated portal page (not the IdP / login page)."""
+    u = urlparse(url)
+    return u.hostname == urlparse(settings.base_url).hostname and u.path.startswith("/members/")
+
+
 async def login_state(page: Page, settings: Settings) -> str:
     """Load the scan page; return LOGGED_IN, AUTH_EXPIRED or SITE_CHANGED.
 
@@ -33,21 +39,15 @@ async def login_state(page: Page, settings: Settings) -> str:
     On any navigation/wait timeout the final URL decides: still off the portal (stalled on
     the IdP/login page) → AUTH_EXPIRED; on the portal but no landmark → SITE_CHANGED.
     """
-    host = urlparse(settings.base_url).hostname
-
-    def on_portal(url: str) -> bool:
-        u = urlparse(url)
-        return u.hostname == host and u.path.startswith("/members/")
-
     try:
         await goto(page, settings, SCAN_PATH)
-        await page.wait_for_url(on_portal)
+        await page.wait_for_url(lambda url: on_portal(url, settings))
         if urlparse(page.url).path.rstrip("/") != SCAN_PATH:
             await goto(page, settings, SCAN_PATH)
         await page.get_by_role("heading", name=SCAN_LANDMARK, exact=True).wait_for(state="visible")
     except PlaywrightTimeoutError:
-        return SITE_CHANGED if on_portal(page.url) else AUTH_EXPIRED
-    return LOGGED_IN if on_portal(page.url) else AUTH_EXPIRED
+        return SITE_CHANGED if on_portal(page.url, settings) else AUTH_EXPIRED
+    return LOGGED_IN if on_portal(page.url, settings) else AUTH_EXPIRED
 
 
 async def is_logged_in(page: Page, settings: Settings) -> bool:

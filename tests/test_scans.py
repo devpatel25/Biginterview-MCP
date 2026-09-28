@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from resumeai_mcp import scans
 from resumeai_mcp.config import Settings
@@ -64,30 +65,47 @@ def _page_html(page_num, total):
     return f'<div data-react-class="{scans.SCANS_APP}" data-react-props="{html.escape(json.dumps(props))}"></div>'
 
 
+PORTAL = "https://portal.test/members/resume_assignments/scans"
+IDP = "https://login.idp.test/saml"
+
+
 class FakePage:
-    def __init__(self, total):
-        self.total, self.loaded = total, []
+    """goto(?page=N) lands on PORTAL and serves page N, unless `on_goto` overrides (url, raise_timeout, html)."""
+
+    def __init__(self, total, on_goto=None):
+        self.total, self.on_goto, self.loaded = total, on_goto, []
+        self.url, self.html = PORTAL, ""
 
     async def content(self):
-        return _page_html(self.loaded[-1], self.total)
+        return self.html
 
 
 @pytest.fixture
 def fake_site(monkeypatch):
-    def install(total):
-        page = FakePage(total)
+    def install(total, on_goto=None, logged_in=True):
+        page = FakePage(total, on_goto)
 
         async def new_page(settings):
             return page
+
+        async def require_login(p, settings, step):
+            if not logged_in:
+                raise ToolError("auth_expired", "expired", "login")
 
         async def nothing(*a, **kw):
             pass
 
         async def goto(p, settings, path):
-            p.loaded.append(int(path.rsplit("=", 1)[1]))
+            n = int(path.rsplit("=", 1)[1])
+            p.loaded.append(n)
+            p.url, timeout, p.html = (p.on_goto or (lambda n: (PORTAL, False, None)))(n)
+            if p.html is None:
+                p.html = _page_html(n, p.total)
+            if timeout:
+                raise PlaywrightTimeoutError("goto timeout")
 
         monkeypatch.setattr(scans, "new_page", new_page)
-        monkeypatch.setattr(scans, "require_login", nothing)
+        monkeypatch.setattr(scans, "require_login", require_login)
         monkeypatch.setattr(scans, "human_delay", nothing)
         monkeypatch.setattr(scans, "goto", goto)
         return page
@@ -96,6 +114,12 @@ def fake_site(monkeypatch):
 
 def _ids(result):
     return [int(s.scan_id) for s in result.scans]
+
+
+def _code(settings, **kw):
+    with pytest.raises(ToolError) as e:
+        asyncio.run(scans.list_scans(settings, **kw))
+    return e.value.code
 
 
 def test_pagination_spans_site_pages(fake_site, tmp_path):
@@ -121,15 +145,46 @@ def test_cursor_past_end(fake_site, tmp_path):
     assert r.scans == [] and r.next_cursor is None
 
 
-@pytest.mark.parametrize("kw", [{"limit": 0}, {"limit": 51}, {"cursor": "abc"}, {"cursor": "-1"}])
+@pytest.mark.parametrize("kw", [
+    {"limit": 0}, {"limit": 51}, {"limit": None}, {"limit": True}, {"limit": "5"},
+    {"cursor": "abc"}, {"cursor": "-1"}, {"cursor": 3}, {"cursor": "\u00b2"},
+])
 def test_invalid_input(kw, tmp_path):
-    with pytest.raises(ToolError) as e:
-        asyncio.run(scans.list_scans(_settings(tmp_path), **kw))
-    assert e.value.code == "invalid_input"
+    assert _code(_settings(tmp_path), **kw) == "invalid_input"
 
 
-def test_corrupt_ledger_is_storage_error(tmp_path):
+def test_corrupt_ledger_is_storage_error(fake_site, tmp_path):
+    fake_site(5)
     (tmp_path / "ledger.jsonl").write_text("{not json\n")
-    with pytest.raises(ToolError) as e:
-        asyncio.run(scans.list_scans(_settings(tmp_path)))
-    assert e.value.code == "storage_error"
+    assert _code(_settings(tmp_path)) == "storage_error"
+
+
+def test_auth_gate_runs_before_ledger(fake_site, tmp_path):
+    fake_site(5, logged_in=False)
+    (tmp_path / "ledger.jsonl").write_text("{not json\n")
+    assert _code(_settings(tmp_path)) == "auth_expired"
+
+
+def test_session_expires_between_precheck_and_load(fake_site, tmp_path):
+    fake_site(5, on_goto=lambda n: (IDP, False, "<html>login</html>"))
+    assert _code(_settings(tmp_path)) == "auth_expired"
+
+
+def test_navigation_timeout_off_portal_is_auth_expired(fake_site, tmp_path):
+    fake_site(5, on_goto=lambda n: (IDP, True, ""))
+    assert _code(_settings(tmp_path)) == "auth_expired"
+
+
+def test_navigation_timeout_on_portal_is_site_changed_with_snapshot(fake_site, tmp_path):
+    fake_site(5, on_goto=lambda n: (PORTAL, True, "<html>half-loaded</html>"))
+    assert _code(_settings(tmp_path)) == "site_changed"
+    assert list((tmp_path / "snapshots").glob("list-scans-p1-*.html"))
+
+
+@pytest.mark.parametrize("attributes", [[], None, "x"])
+def test_malformed_row_is_site_changed(fake_site, tmp_path, attributes):
+    props = {"parsedResumes": {"data": [{"id": "1", "attributes": attributes}]},
+             "paginationData": {"count": 1, "from": 1}}
+    bad = f'<div data-react-class="{scans.SCANS_APP}" data-react-props="{html.escape(json.dumps(props))}"></div>'
+    fake_site(1, on_goto=lambda n: (PORTAL, False, bad))
+    assert _code(_settings(tmp_path)) == "site_changed"

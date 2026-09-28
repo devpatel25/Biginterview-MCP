@@ -3,7 +3,9 @@
 import json
 from html.parser import HTMLParser
 
-from .auth import require_login
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+from .auth import AUTH_EXPIRED, on_portal, raise_for_state, require_login
 from .browser import goto, human_delay, new_page, snapshot
 from .config import Settings
 from .schemas import ScanList, ScanSummary, ToolError
@@ -44,6 +46,8 @@ def parse_my_scans(html: str) -> tuple[list[dict], dict]:
 def to_summary(row: dict, ledger: dict[str, dict]) -> ScanSummary:
     """Site row → ScanSummary. Hashes (and company/guide the row lacks) come only from the ledger (§7.2)."""
     a, scan_id = row["attributes"], str(row["id"])
+    if not isinstance(a, dict):
+        raise TypeError("row attributes is not an object")
     entry = ledger.get(scan_id, {})
     medal = a.get("highest_score")
     return ScanSummary(
@@ -61,30 +65,36 @@ def to_summary(row: dict, ledger: dict[str, dict]) -> ScanSummary:
 
 async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = None) -> ScanList:
     """§7.2 / §10.3. cursor is the absolute row offset as a string (opaque to the agent)."""
-    if not 1 <= limit <= 50:
-        raise ToolError("invalid_input", "limit must be 1-50.", "Retry with 1 <= limit <= 50.")
-    if cursor is not None and not cursor.isdigit():
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+        raise ToolError("invalid_input", "limit must be an integer 1-50.", "Retry with 1 <= limit <= 50.")
+    if cursor is not None and not (isinstance(cursor, str) and cursor.isascii() and cursor.isdigit()):
         raise ToolError("invalid_input", "Malformed cursor.", "Pass next_cursor exactly as returned, or null.")
     offset = int(cursor or 0)
-    ledger = load_ledger(settings)
     page = await new_page(settings)
-    await require_login(page, settings, "list-scans")
+    await require_login(page, settings, "list-scans")  # §6.2: auth gate before any other work
+    ledger = load_ledger(settings)
 
     scans: list[ScanSummary] = []
     total = None
     while len(scans) < limit and (total is None or offset + len(scans) < total):
         n = offset + len(scans)
         page_num = n // PAGE_SIZE + 1
+        step = f"list-scans-p{page_num}"
         await human_delay(settings)
-        await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
+        try:
+            await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
+        except PlaywrightTimeoutError:
+            pass  # classified below: off-portal → auth_expired, on-portal with no props → site_changed
+        if not on_portal(page.url, settings):  # session died after the pre-check (SSO redirect)
+            await raise_for_state(page, settings, AUTH_EXPIRED, step)
         try:
             site_rows, pagination = parse_my_scans(await page.content())
             if site_rows and pagination.get("from") != (page_num - 1) * PAGE_SIZE + 1:
                 raise ValueError("page size changed")
             chunk = site_rows[n - (page_num - 1) * PAGE_SIZE:][: limit - len(scans)]
             chunk = [to_summary(r, ledger) for r in chunk]  # pydantic ValidationError is a ValueError
-        except (ValueError, KeyError, TypeError) as e:
-            path = await snapshot(page, settings, f"list-scans-p{page_num}")
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            path = await snapshot(page, settings, step)
             raise ToolError("site_changed", f"My Scans data not readable ({type(e).__name__}).",
                             f"Stop. Inspect snapshot {path.name}; the parser needs a fix.") from e
         total = pagination["count"]
