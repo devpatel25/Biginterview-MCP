@@ -36,11 +36,7 @@ class FakePage:
         if not pred(self.url):
             raise PlaywrightTimeoutError("wait_for_url timeout")
 
-    def get_by_text(self, text):
-        return self
-
-    @property
-    def first(self):
+    def get_by_role(self, role, **kw):
         return self
 
     async def wait_for(self, state=None):
@@ -74,3 +70,11 @@ def test_second_goto_timeout_does_not_raise():
 
 def test_portal_served_but_landmark_missing():
     assert state(FakePage([SCAN], landmark=False)) == SITE_CHANGED
+
+
+def test_parse_scans_remaining():
+    from resumeai_mcp.auth import parse_scans_remaining
+    assert parse_scans_remaining("5 scans left today.") == 5
+    assert parse_scans_remaining("0 scans remaining") == 0
+    assert parse_scans_remaining("1 scan left") == 1
+    assert parse_scans_remaining("Scan limit resets daily") is None
