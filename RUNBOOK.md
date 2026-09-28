@@ -81,7 +81,7 @@ file hash, so a fresh scan) and the next iteration polls it normally.
 | `limit_reached` | STOP. Resume after local midnight, or the user requests a reset. |
 | `scan_failed` | Keep the scan id; one retry with a fresh `start_scan`, then STOP. |
 | `scan_timeout` | Agent-side (no completion after 10 min of polling): keep the scan id; STOP; the user may check My Scans. |
-| `unknown_state` | STOP and follow `error.hint`; inspect a snapshot only when the hint names one (a pending submission, for example, has none). **Do not rescan**: a submission may be awaiting recovery. |
+| `unknown_state` | STOP and follow `error.hint`; inspect a snapshot only when the hint names one (a pending submission, PLAN.md §10.2, has none; `get_scan_status` returns `state=unknown` with a snapshot-naming `hint` instead, §7.4). **Do not rescan**: a submission may be awaiting recovery. |
 | `not_found` | Re-run `list_scans`; likely a typo or a deleted scan. |
 | `site_changed` | STOP. Snapshot saved; the site layout changed and the server needs a fix. |
 | `invalid_input` | Fix the input named in the message; retry once. (A scan already in flight also lands here: poll it.) |
