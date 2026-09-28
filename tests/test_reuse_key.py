@@ -146,6 +146,15 @@ def _docx(tmp_path, name, body):
     (b"BT /F1 11 Tf (Line two) ' ET", True),                   # ' operator
     (b"BT /F1 11 Tf () Tj ET", False),                          # empty string shows nothing
     (b"BT /F1 11 Tf <> Tj ET", False),
+    (b"BT /F1 11 Tf (   ) Tj ET", False),                       # whitespace-only literal
+    (b"BT /F1 11 Tf <202020> Tj ET", False),                    # whitespace-only hex
+    (b"BT /F1 11 Tf [(  ) -20 <20>] TJ ET", False),
+    (b"BT /F1 11 Tf [(  ) -20 (Hi)] TJ ET", True),
+    (rb"BT /F1 11 Tf (\040\040) Tj ET", False),                # escaped spaces (octal)
+    (rb"BT /F1 11 Tf (\t\n) Tj ET", False),                     # escaped whitespace
+    (b"BT /F1 11 Tf <2> Tj ET", False),                          # odd hex pads to <20> = space
+    (rb"BT /F1 11 Tf (\101) Tj ET", True),                      # octal 101 = "A"
+    (b"BT /F1 11 Tf <4> Tj ET", True),                           # pads to <40> = "@"
     (IMAGE_OPS, False),
 ])
 def test_pdf_text_operators(tmp_path, ops, expected):

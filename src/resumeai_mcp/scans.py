@@ -177,9 +177,39 @@ def has_extractable_text(path: Path) -> bool:
             raw = zlib.decompress(raw)
         except zlib.error:
             pass
-        if PDF_TEXT_OP.search(raw):
+        if any(_shows_something(m.group(0)) for m in PDF_TEXT_OP.finditer(raw)):
             return True
     return False
+
+
+BLANK = set(b" \t\r\n\f\b\x00")
+PDF_ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f"}
+
+
+def _decode_literal(body: bytes) -> bytes:
+    """PDF literal-string escapes (ISO 32000 §7.3.4.2): \\n \\r \\t \\b \\f \\( \\) \\\\, octal \\ddd,
+    backslash-newline continuation."""
+    def repl(m):
+        esc = m.group(1)
+        if esc[:1].isdigit():
+            return bytes([int(esc, 8) & 0xFF])
+        if esc in (b"\n", b"\r", b"\r\n"):
+            return b""
+        return PDF_ESCAPES.get(esc, esc)
+    return re.sub(rb"\\([0-7]{1,3}|\r\n|.)", repl, body, flags=re.S)
+
+
+def _decode_hex(body: bytes) -> bytes:
+    digits = re.sub(rb"\s", b"", body)
+    return bytes.fromhex((digits + b"0" * (len(digits) % 2)).decode())  # odd length: trailing 0 nibble (§7.3.4.3)
+
+
+def _shows_something(op: bytes) -> bool:
+    """A text operation that draws more than whitespace: some decoded string byte is not NUL/whitespace (applies to
+    single-byte and CID-padded encodings alike)."""
+    strings = [_decode_literal(b) for b in re.findall(rb"\(((?:\\.|[^\\)])*)\)", op, re.S)]
+    strings += [_decode_hex(b) for b in re.findall(rb"<([0-9A-Fa-f\s]*)>", op)]
+    return any(byte not in BLANK for s in strings for byte in s)
 
 
 def validate_inputs(resume_path, job_title, company, job_description, scoring_guide) -> Path:
