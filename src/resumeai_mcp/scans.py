@@ -3,10 +3,8 @@
 import json
 from html.parser import HTMLParser
 
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-
-from .auth import AUTH_EXPIRED, on_portal, raise_for_state, require_login, site_errors
-from .browser import goto, human_delay, new_page, snapshot
+from .auth import fetch_page, require_login, site_changed_error
+from .browser import new_page
 from .config import Settings
 from .schemas import ScanList, ScanSummary, ToolError
 from .storage import load_ledger
@@ -20,23 +18,31 @@ MEDALS = ("gold", "silver", "bronze")
 
 
 class _PropsFinder(HTMLParser):
-    def __init__(self):
+    def __init__(self, app: str):
         super().__init__()
-        self.props: str | None = None
+        self.app, self.props = app, None
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if self.props is None and a.get("data-react-class") == SCANS_APP:
+        if self.props is None and a.get("data-react-class") == self.app:
             self.props = a.get("data-react-props")
+
+
+def react_props(html: str, app: str) -> dict:
+    """The JSON props of the portal's React app `app` (§9 amendment 2026-09-28). ValueError if absent."""
+    finder = _PropsFinder(app)
+    finder.feed(html)
+    if finder.props is None:
+        raise ValueError(f"{app} props not found")
+    props = json.loads(finder.props)
+    if not isinstance(props, dict):
+        raise TypeError(f"{app} props is not an object")
+    return props
 
 
 def parse_my_scans(html: str) -> tuple[list[dict], dict]:
     """(rows, paginationData) from My Scans HTML. Raises ValueError/KeyError/TypeError if the shape changed."""
-    finder = _PropsFinder()
-    finder.feed(html)
-    if finder.props is None:
-        raise ValueError(f"{SCANS_APP} props not found")
-    props = json.loads(finder.props)
+    props = react_props(html, SCANS_APP)
     rows, pagination = props["parsedResumes"]["data"], props["paginationData"]
     if not isinstance(rows, list) or not isinstance(pagination["count"], int):
         raise TypeError("unexpected My Scans props shape")
@@ -82,18 +88,7 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
         n = offset + len(scans)
         page_num = n // PAGE_SIZE + 1
         step = f"list-scans-p{page_num}"
-        await human_delay(settings)
-        async with site_errors(page, settings):
-            try:
-                await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
-            except PlaywrightTimeoutError:
-                pass  # classified below: off-portal → auth_expired, on-portal with no props → site_changed
-        async with site_errors(page, settings):  # page may redirect/close while being read
-            content = await page.content()
-        # URL checked *after* the read: a redirect that lands mid-read must be auth_expired, not a
-        # login page misparsed as site_changed. Session died after the pre-check → SSO redirect.
-        if not on_portal(page.url, settings):
-            await raise_for_state(page, settings, AUTH_EXPIRED, step)
+        content = await fetch_page(page, settings, f"{SCANS_PATH}?page={page_num}", step)
         try:
             site_rows, pagination = parse_my_scans(content)
             if site_rows and pagination.get("from") != (page_num - 1) * PAGE_SIZE + 1:
@@ -101,10 +96,7 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
             chunk = site_rows[n - (page_num - 1) * PAGE_SIZE:][: limit - len(scans)]
             chunk = [to_summary(r, ledger) for r in chunk]  # pydantic ValidationError is a ValueError
         except (ValueError, KeyError, TypeError, AttributeError) as e:
-            async with site_errors(page, settings):
-                path = await snapshot(page, settings, step)
-            raise ToolError("site_changed", f"My Scans data not readable ({type(e).__name__}).",
-                            f"Stop. Inspect snapshot {path.name}; the parser needs a fix.") from e
+            raise await site_changed_error(page, settings, step, f"My Scans data ({type(e).__name__})") from e
         total = pagination["count"]
         if not chunk:
             break

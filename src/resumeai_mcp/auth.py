@@ -9,7 +9,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import goto, new_page, snapshot
+from .browser import goto, human_delay, new_page, snapshot
 from .config import Settings
 from .schemas import AuthStatus, ToolError
 
@@ -106,6 +106,32 @@ async def raise_for_state(page: Page, settings: Settings, state: str, step: str)
             path = await snapshot(page, settings, step)
         raise ToolError("site_changed", f"Scan page landmark '{SCAN_LANDMARK}' not found.",
                         f"Stop. Inspect snapshot {path.name}; selectors need a fix.")
+
+
+async def fetch_page(page: Page, settings: Settings, path: str, step: str) -> str:
+    """Human-paced navigation to a portal page after the pre-check; returns its HTML.
+
+    Timeouts fall through to the URL check; other Playwright errors go through site_errors. The URL is
+    checked *after* the read: a redirect that lands mid-read must be auth_expired, not a login page
+    misparsed as site_changed by the caller."""
+    await human_delay(settings)
+    async with site_errors(page, settings):
+        try:
+            await goto(page, settings, path)
+        except PlaywrightTimeoutError:
+            pass  # classified below: off-portal → auth_expired; on-portal → caller's parser decides
+    async with site_errors(page, settings):  # page may redirect/close while being read
+        content = await page.content()
+    if not on_portal(page.url, settings):  # session died after the pre-check (SSO redirect)
+        await raise_for_state(page, settings, AUTH_EXPIRED, step)
+    return content
+
+
+async def site_changed_error(page: Page, settings: Settings, step: str, what: str) -> ToolError:
+    """§13 site_changed with the snapshot already saved (§9 change-detection)."""
+    async with site_errors(page, settings):
+        path = await snapshot(page, settings, step)
+    return ToolError("site_changed", f"{what} not readable.", f"Stop. Inspect snapshot {path.name}; the parser needs a fix.")
 
 
 def parse_scans_remaining(text: str) -> int | None:

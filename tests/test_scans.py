@@ -9,7 +9,7 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from resumeai_mcp import scans
+from resumeai_mcp import auth, scans
 from resumeai_mcp.config import Settings
 from resumeai_mcp.scans import PAGE_SIZE, parse_my_scans, to_summary
 from resumeai_mcp.schemas import ToolError
@@ -111,8 +111,8 @@ def fake_site(monkeypatch):
 
         monkeypatch.setattr(scans, "new_page", new_page)
         monkeypatch.setattr(scans, "require_login", require_login)
-        monkeypatch.setattr(scans, "human_delay", nothing)
-        monkeypatch.setattr(scans, "goto", goto)
+        monkeypatch.setattr(auth, "human_delay", nothing)
+        monkeypatch.setattr(auth, "goto", goto)
         return page
     return install
 
