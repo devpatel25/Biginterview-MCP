@@ -44,3 +44,53 @@ class ScanSummary(BaseModel):
 class ScanList(BaseModel):
     scans: list[ScanSummary]
     next_cursor: str | None
+
+
+# §8 ScanFeedback. Status amendment 2026-09-28: site labels gold "Good Work!" → perfect, bronze "Needs Work!" →
+# needs_work, silver "Almost There" (not a §8 label, and flagged by the site) → warning; `meets` unused so far.
+Status = Literal["perfect", "meets", "needs_work", "warning"]
+CategoryName = Literal["readability", "credibility", "ats_fit", "format"]
+
+
+class Criterion(BaseModel):
+    name: str
+    status: Status
+    detail: str
+    suggestion: str | None
+
+
+class Category(BaseModel):
+    badge: Medal | None  # null only when the site gives no badge; the loop treats it as "cannot evaluate"
+    criteria: list[Criterion]
+
+
+class AtsFitCategory(Category):
+    keywords_matched: list[str]
+    keywords_unmatched: list[str]
+
+
+class Categories(BaseModel):
+    readability: Category
+    credibility: Category
+    ats_fit: AtsFitCategory
+    format: Category
+
+
+class ActionItem(BaseModel):
+    category: CategoryName
+    item: str
+    priority: Literal["high", "medium", "low"]
+
+
+class ScanFeedback(BaseModel):
+    scan_id: str
+    resume_filename: str
+    resume_sha256: str | None  # ledger-only
+    role_title: str
+    company: str | None
+    scoring_guide: str | None
+    scanned_at: datetime | None
+    medal: Medal | None
+    partial: bool
+    categories: Categories
+    action_items: list[ActionItem]
