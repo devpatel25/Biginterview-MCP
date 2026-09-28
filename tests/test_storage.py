@@ -61,3 +61,14 @@ def test_existing_permissive_ledger_is_tightened(tmp_path):
     ledger.chmod(0o644)
     append_ledger(s, {"scan_id": "1"})
     assert _mode(ledger) == 0o600
+
+
+def test_snapshots_older_than_30_days_are_purged(tmp_path):
+    import time
+    from resumeai_mcp.storage import save_snapshot
+    s = _settings(tmp_path / "data")
+    old = save_snapshot(s, "old", "<html>old</html>")
+    stale = time.time() - 31 * 86400
+    os.utime(old, (stale, stale))
+    recent = save_snapshot(s, "new", "<html>new</html>")  # saving triggers the §14 purge
+    assert not old.exists() and recent.exists()
