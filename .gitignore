@@ -220,3 +220,6 @@ __marimo__/
 # resumeai-mcp (PLAN.md §17): browser profile = login material, snapshots = PII
 resumeai-profile/
 *.html
+
+# Redacted parser fixtures are committed on purpose (PLAN.md §16 amendment 2026-09-28)
+!tests/fixtures/*.fixture.html
