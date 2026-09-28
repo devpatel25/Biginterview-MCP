@@ -360,6 +360,14 @@ Error codes are catalogued in §13.
   the summary tiles, expands `VIEW DETAILED FEEDBACK`, walks the four category tabs, parses
   criteria/action items/keyword lists into the schema. Saves the raw HTML snapshot via `storage.py`.
   If `state != complete` → error `invalid_input`.
+- **Amendment 2026-09-28 (Phase 2 finding, user-approved):** the review_summary page embeds everything
+  the detailed tabs render (medal, the four category badges, every criterion's gold/silver/bronze score
+  and site advice, org importance, keyword data, company, scoring guide) as JSON in the
+  `ResumeAssignmentReviewSummaryApp` element's `data-react-props`. The detailed tabs show one criterion
+  at a time (~26 clicks per scan), so the tool loads **only the summary page** and parses that JSON —
+  no clicks. Missing/malformed props → `site_changed` + snapshot; a redirect away from
+  `review_summary/<id>` → `not_found` (heuristic, not yet verified with a bogus id). The full
+  `ScanFeedback` is backed up to `feedback/<scan_id>.json` (0600, atomic write) on every successful read.
 - **Description must contain the honesty rule**, e.g.: "Unmatched keywords are verification
   candidates, not a shopping list. Only add a keyword to the resume when it is backed by real
   experience, project, or coursework. Never fabricate skills, metrics, or employment."
@@ -456,6 +464,25 @@ Placeholder values below are unmistakably illustrative and must never be treated
   site's exact casing; matching elsewhere is case-insensitive.
 - If the detailed-feedback tabs fail to load but the summary medal/badges are visible, return the
   summary with `"partial": true` and empty `criteria` arrays rather than failing.
+
+**Amendment 2026-09-28 (Phase 2 findings, user-approved):**
+- The site shows three criterion labels, one per score type: gold "Good Work!" → `perfect`; bronze
+  "Needs Work!" → `needs_work`; silver "Almost There" (not a label listed above, and flagged on the
+  summary page) → `warning` per the unknown-label rule. `meets` is unused until the site shows a
+  "Meets…" label. `detail` = the site label + the site's advice text for that score.
+- `criteria` per category = the category's direct children (the site's per-tab Action Items list:
+  4 / 9 / 7 / 6 today). Depth-2 sub-criteria (e.g. Body/Header Font Size) roll up into their parent.
+- `suggestion` = the site's `improvement_advice` for that criterion when it ships one, else null (the
+  other "How to improve" texts are computed client-side from raw data).
+- `action_items` = every non-`perfect` criterion; `priority` = the scoring guide's importance
+  (high/medium/low) for that criterion; items under a Gold badge are marked as such.
+- `keywords_matched` = the site's resume-keyword list (site order and casing); `keywords_unmatched` =
+  job keywords not matched case-insensitively. Verified against the rendered ATS Fit lists and the
+  keyword-match score on 3 real scans.
+- `partial=true` when the summary JSON yields badges but no criteria.
+- `medal=null` only when the site's score type is not gold/silver/bronze (never guessed; the loop
+  treats it like a null badge: cannot evaluate → stop and report). `priority` falls back to `medium`
+  when the scoring guide gives no importance for a criterion.
 
 ---
 

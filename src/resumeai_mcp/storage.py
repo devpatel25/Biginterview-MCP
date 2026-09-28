@@ -7,7 +7,13 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Settings, private_dir
-from .schemas import ToolError
+from .schemas import ScanFeedback, ToolError
+
+
+def data_subdir(settings: Settings, name: str) -> Path:
+    """DATA_DIR/<name>, both 0700: mkdir(parents=True) alone would leave DATA_DIR at umask perms (§6.4)."""
+    private_dir(settings.data_dir)
+    return private_dir(settings.data_dir / name)
 
 
 def save_snapshot(settings: Settings, name: str, html: str) -> Path:
@@ -16,11 +22,14 @@ def save_snapshot(settings: Settings, name: str, html: str) -> Path:
     mkstemp creates the file exclusively with 0600 (contains PII, §6.4) and a unique suffix,
     so same-second snapshots never overwrite each other.
     """
-    private_dir(settings.data_dir)  # mkdir(parents=True) alone would leave DATA_DIR at umask perms
-    snap_dir = private_dir(settings.data_dir / "snapshots")
-    fd, path = tempfile.mkstemp(prefix=f"{name}-{datetime.now():%Y%m%dT%H%M%S}-", suffix=".html", dir=snap_dir)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(html)
+    try:
+        snap_dir = data_subdir(settings, "snapshots")
+        fd, path = tempfile.mkstemp(prefix=f"{name}-{datetime.now():%Y%m%dT%H%M%S}-", suffix=".html", dir=snap_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(html)
+    except OSError as e:  # every snapshot (success and site_changed paths) goes through here
+        raise ToolError("storage_error", f"Cannot write HTML snapshot ({type(e).__name__}).",
+                        "Stop. Fix DATA_DIR permissions/space, then retry.") from e
     return Path(path)
 
 
@@ -42,3 +51,19 @@ def load_ledger(settings: Settings) -> dict[str, dict]:
             "Inspect or repair ledger.jsonl; do not delete scans until it reads cleanly.",
         ) from e
     return entries
+
+
+def backup_feedback(settings: Settings, feedback: ScanFeedback) -> Path:
+    """Write feedback/<scan_id>.json (0600) atomically: temp file + os.replace, so a crash never leaves a
+    truncated backup that delete_scan could later trust (§14)."""
+    try:
+        backup_dir = data_subdir(settings, "feedback")
+        fd, tmp = tempfile.mkstemp(prefix=f".{feedback.scan_id}-", suffix=".json", dir=backup_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(feedback.model_dump_json(indent=2))
+        path = backup_dir / f"{feedback.scan_id}.json"
+        os.replace(tmp, path)
+    except OSError as e:
+        raise ToolError("storage_error", f"Cannot write feedback backup ({type(e).__name__}).",
+                        "Stop. Fix DATA_DIR permissions/space; never delete a scan without a backup.") from e
+    return path
