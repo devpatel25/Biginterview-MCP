@@ -12,6 +12,9 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.scripts]
+resumeai-mcp = "resumeai_mcp.server:main"
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
