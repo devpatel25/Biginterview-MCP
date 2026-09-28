@@ -1,4 +1,4 @@
-<!-- # Big Interview ResumeAI MCP — Build Plan -->
+# Big Interview ResumeAI MCP — Build Plan
 
 > **Purpose of this document:** a complete, professional-grade specification for building a custom
 > MCP (Model Context Protocol) server that gives an AI agent programmatic access to Big Interview's
@@ -171,6 +171,9 @@ biginterview-resumeai-mcp/
 └── tests/
     ├── test_schemas.py
     ├── test_reuse_key.py
+    ├── test_browser.py           # profile-lock detection, single-launch context init
+    ├── test_auth.py              # login_state: redirect / stalled SSO / missing landmark (fake page)
+    ├── test_storage.py           # snapshot/dir permissions, unique snapshot names
     └── test_feedback_parser.py   # parser tests against saved HTML fixtures (no live site)
 ```
 
@@ -619,9 +622,10 @@ accounts, or exceeding what the site's own UI permits a human to do.
 | `site_changed` | Expected landmark missing (selector drift) | STOP. Snapshot saved. Needs human/parser fix. |
 | `invalid_input` | Bad file, unknown scoring guide, empty JD, feedback requested on incomplete scan, etc. | Fix inputs, retry once. |
 | `storage_error` | Local ledger/backup failed | STOP — never delete a scan whose feedback isn't backed up. |
+| `profile_in_use` | Browser profile locked by another process (e.g. `scripts/login.py` running, §6.1) | STOP. Tell user to close the other browser/login script, then retry. |
 
 Retry policy: at most **2 retries** per failing call, with the 2–5 s human delay between them.
-`auth_expired`, `site_changed`, and `unknown_state` are never retried blindly.
+`auth_expired`, `site_changed`, `unknown_state`, and `profile_in_use` are never retried blindly.
 
 ---
 
