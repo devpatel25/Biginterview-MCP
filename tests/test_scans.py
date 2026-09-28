@@ -209,3 +209,17 @@ def test_content_failure_is_network_error(fake_site, tmp_path):
     page = fake_site(5)
     page.content_error = PlaywrightError("Target page, context or browser has been closed")
     assert _code(_settings(tmp_path)) == "network_error"
+
+
+def test_content_redirects_to_sso_while_reading_is_auth_expired(fake_site, tmp_path):
+    page = fake_site(5)
+
+    class Racing(PlaywrightError):
+        pass
+
+    async def content():
+        page.url = IDP  # redirect lands mid-read
+        raise Racing("Execution context was destroyed")
+
+    page.content = content
+    assert _code(_settings(tmp_path)) == "auth_expired"

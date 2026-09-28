@@ -1,6 +1,7 @@
 """Login-state detection and auth_status (PLAN.md §6.2, §7.1)."""
 
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -42,6 +43,24 @@ def network_error(e: PlaywrightError) -> ToolError:
                      "Retry up to 2x with the 2-5 s delay; if it persists, stop and report.")
 
 
+def auth_expired_error() -> ToolError:
+    return ToolError("auth_expired", "Big Interview session expired (SSO login required).",
+                     "Stop. Ask the user to run scripts/login.py, then retry.")
+
+
+@asynccontextmanager
+async def site_errors(page: Page, settings: Settings):
+    """Browser boundary for any Playwright call after the pre-check: a Playwright error (incl. timeout)
+    becomes auth_expired if the page has moved to an SSO/login host, else network_error.
+    Callers that classify timeouts themselves catch PlaywrightTimeoutError inside this block."""
+    try:
+        yield
+    except PlaywrightError as e:
+        if sso_redirect(page.url, settings):
+            raise auth_expired_error() from e
+        raise network_error(e) from e
+
+
 async def login_state(page: Page, settings: Settings) -> str:
     """Load the scan page; return LOGGED_IN, AUTH_EXPIRED or SITE_CHANGED.
 
@@ -81,10 +100,10 @@ async def require_login(page: Page, settings: Settings, step: str) -> None:
 
 async def raise_for_state(page: Page, settings: Settings, state: str, step: str) -> None:
     if state == AUTH_EXPIRED:
-        raise ToolError("auth_expired", "Big Interview session expired (SSO login required).",
-                        "Stop. Ask the user to run scripts/login.py, then retry.")
+        raise auth_expired_error()
     if state == SITE_CHANGED:
-        path = await snapshot(page, settings, step)
+        async with site_errors(page, settings):
+            path = await snapshot(page, settings, step)
         raise ToolError("site_changed", f"Scan page landmark '{SCAN_LANDMARK}' not found.",
                         f"Stop. Inspect snapshot {path.name}; selectors need a fix.")
 
@@ -103,8 +122,9 @@ async def auth_status(settings: Settings) -> AuthStatus:
     remaining = None
     if state == LOGGED_IN:
         counter = page.get_by_role("heading", name=REMAINING_RE)
-        if await counter.count():
-            remaining = parse_scans_remaining(await counter.first.inner_text())
+        async with site_errors(page, settings):
+            if await counter.count():
+                remaining = parse_scans_remaining(await counter.first.inner_text())
     return AuthStatus(
         logged_in=state == LOGGED_IN,
         scans_remaining=remaining,

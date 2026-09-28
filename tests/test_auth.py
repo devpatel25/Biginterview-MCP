@@ -95,3 +95,60 @@ def test_connection_failure_raises_network_error():
 
 def test_nav_error_on_idp_is_auth_expired():
     assert state(FakePage([(IDP, PlaywrightError("net::ERR_ABORTED"))])) == AUTH_EXPIRED
+
+
+class CounterPage:
+    """Logged-in scan page whose counter heading read fails at `fail_at` ("count" | "inner_text")."""
+
+    def __init__(self, fail_at, url=SCAN):
+        self.fail_at, self.url = fail_at, url
+
+    def get_by_role(self, role, **kw):
+        return self
+
+    @property
+    def first(self):
+        return self
+
+    async def count(self):
+        if self.fail_at == "count":
+            raise PlaywrightError("Target page, context or browser has been closed")
+        return 1
+
+    async def inner_text(self):
+        if self.fail_at == "inner_text":
+            raise PlaywrightError("Element is not attached to the DOM")
+        return "5 scans left today."
+
+
+def _auth_status(monkeypatch, page):
+    from resumeai_mcp import auth
+
+    async def new_page(settings):
+        return page
+
+    async def logged_in(p, settings):
+        return LOGGED_IN
+
+    monkeypatch.setattr(auth, "new_page", new_page)
+    monkeypatch.setattr(auth, "login_state", logged_in)
+    return asyncio.run(auth.auth_status(SETTINGS))
+
+
+def test_auth_status_reads_counter(monkeypatch):
+    s = _auth_status(monkeypatch, CounterPage(fail_at=None))
+    assert s.logged_in and s.scans_remaining == 5
+
+
+@pytest.mark.parametrize("fail_at", ["count", "inner_text"])
+def test_auth_status_counter_failure_is_network_error(monkeypatch, fail_at):
+    with pytest.raises(ToolError) as e:
+        _auth_status(monkeypatch, CounterPage(fail_at))
+    assert e.value.code == "network_error"
+
+
+@pytest.mark.parametrize("fail_at", ["count", "inner_text"])
+def test_auth_status_counter_failure_on_sso_is_auth_expired(monkeypatch, fail_at):
+    with pytest.raises(ToolError) as e:
+        _auth_status(monkeypatch, CounterPage(fail_at, url=IDP))
+    assert e.value.code == "auth_expired"

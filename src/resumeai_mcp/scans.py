@@ -3,10 +3,9 @@
 import json
 from html.parser import HTMLParser
 
-from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from .auth import AUTH_EXPIRED, network_error, on_portal, raise_for_state, require_login, sso_redirect
+from .auth import AUTH_EXPIRED, on_portal, raise_for_state, require_login, site_errors
 from .browser import goto, human_delay, new_page, snapshot
 from .config import Settings
 from .schemas import ScanList, ScanSummary, ToolError
@@ -84,21 +83,15 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
         page_num = n // PAGE_SIZE + 1
         step = f"list-scans-p{page_num}"
         await human_delay(settings)
-        nav_error = None
-        try:
-            await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
-        except PlaywrightTimeoutError:
-            pass  # classified below: off-portal → auth_expired, on-portal with no props → site_changed
-        except PlaywrightError as e:
-            nav_error = e
-        if nav_error is not None and not sso_redirect(page.url, settings):
-            raise network_error(nav_error) from nav_error
+        async with site_errors(page, settings):
+            try:
+                await goto(page, settings, f"{SCANS_PATH}?page={page_num}")
+            except PlaywrightTimeoutError:
+                pass  # classified below: off-portal → auth_expired, on-portal with no props → site_changed
         if not on_portal(page.url, settings):  # session died after the pre-check (SSO redirect)
             await raise_for_state(page, settings, AUTH_EXPIRED, step)
-        try:
+        async with site_errors(page, settings):  # page may redirect/close while being read
             content = await page.content()
-        except PlaywrightError as e:  # page navigating away / closed
-            raise network_error(e) from e
         try:
             site_rows, pagination = parse_my_scans(content)
             if site_rows and pagination.get("from") != (page_num - 1) * PAGE_SIZE + 1:
@@ -106,7 +99,8 @@ async def list_scans(settings: Settings, limit: int = 20, cursor: str | None = N
             chunk = site_rows[n - (page_num - 1) * PAGE_SIZE:][: limit - len(scans)]
             chunk = [to_summary(r, ledger) for r in chunk]  # pydantic ValidationError is a ValueError
         except (ValueError, KeyError, TypeError, AttributeError) as e:
-            path = await snapshot(page, settings, step)
+            async with site_errors(page, settings):
+                path = await snapshot(page, settings, step)
             raise ToolError("site_changed", f"My Scans data not readable ({type(e).__name__}).",
                             f"Stop. Inspect snapshot {path.name}; the parser needs a fix.") from e
         total = pagination["count"]
