@@ -107,12 +107,12 @@ RECOVERY_WINDOW = timedelta(minutes=10)  # §10.2
 # click are excluded by id (known_ids), so an older same-file/same-title row can never be captured.
 CLOCK_SKEW = timedelta(seconds=60)
 IN_FLIGHT_WINDOW = timedelta(minutes=15)  # §12: one scan in flight; older unfinished entries are stale
-# My Scans row `status` → §7.4 state. Only "success" is observed so far (2026-09-28); "failed"/"error" are the
-# site's explicit failure words. Anything else → unknown (never silently failed, §7.4).
-# ponytail: add the in-progress value seen during the Phase 3 live scan (expected "processing"/"pending").
+# My Scans row `status` → §7.4 state. Observed live 2026-09-28 (scan 690156): "parsing" → "analyzing" →
+# "success" in ~1 min. "failed"/"error" are the site's explicit failure words (not yet observed). The other
+# in-progress words are defensive. Anything else → unknown (never silently failed, §7.4).
 ROW_STATES: dict[str, ScanState] = {"success": "complete", "failed": "failed", "error": "failed",
-                                    "processing": "scanning", "scanning": "scanning", "pending": "queued",
-                                    "queued": "queued"}
+                                    "parsing": "scanning", "analyzing": "scanning", "processing": "scanning",
+                                    "scanning": "scanning", "pending": "queued", "queued": "queued"}
 # §7.3 heuristic JD cleanup: drop paragraphs that are EO / benefits / legal boilerplate, keep everything else.
 BOILERPLATE_RE = re.compile(
     r"equal (employment )?opportunity|\beeo\b|affirmative action|without regard to (race|sex|gender)|"
@@ -241,6 +241,16 @@ def row_state(attrs: dict) -> ScanState:
 def site_filename(name: str) -> str:
     """The site stores uploads with spaces as underscores ("Resume (1).pdf" → "Resume_(1).pdf")."""
     return name.replace(" ", "_").lower()
+
+
+def displayed_name_matches(displayed: str, basename: str) -> bool:
+    """The upload's filename heading. Live (2026-09-28) the site shortens long names with a trailing "..."
+    ("2026-09-26__Resume_InternDataScientis..."), so a shortened display must be a prefix of the real name."""
+    shown = displayed.strip()
+    for ellipsis in ("...", "…"):
+        if shown.endswith(ellipsis) and len(shown) > len(ellipsis):
+            return basename.startswith(shown[: -len(ellipsis)])
+    return shown == basename
 
 
 def find_new_row(rows: list[dict], basename: str, title: str, since: datetime,
@@ -461,7 +471,10 @@ async def _submit(page: Page, settings: Settings, path: Path, title: str, compan
         if not await upload.count():
             raise await site_changed_error(page, settings, step, "Resume file input")
         await upload.first.set_input_files(str(path))
-        await landmark(page.get_by_role("heading", name=path.name, exact=True), f"Uploaded filename '{path.name}'")
+        await landmark(page.get_by_role("button", name="Remove file", exact=True), "Uploaded file (Remove file control)")
+        shown = await page.get_by_role("heading", level=3).all_inner_texts()
+        if not any(displayed_name_matches(text, path.name) for text in shown):  # §9: verify the uploaded basename
+            raise await site_changed_error(page, settings, step, f"Uploaded filename '{path.name}' (not displayed)")
         scan_button = await landmark(page.get_by_role("button", name="Scan Resume", exact=True), "Scan Resume button")
 
         # §10.2: record the attempt *before* clicking, so a crash after the click is recoverable.

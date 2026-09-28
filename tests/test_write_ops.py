@@ -329,7 +329,10 @@ class FakeLocator:
 
     async def set_input_files(self, path):
         from pathlib import Path
-        self.form.controls.add(("heading", Path(path).name))
+        self.form.controls |= {("heading", Path(path).name), ("button", "Remove file")}
+
+    async def all_inner_texts(self):
+        return [name for role, name in self.form.controls if role == "heading"]
 
 
 class FakeForm:
@@ -338,7 +341,7 @@ class FakeForm:
         self.filled, self.rows, self.new_row = {}, [], new_row
         self.url = "https://portal.test/members/resume_assignments/scan"
 
-    def get_by_role(self, role, name=None, exact=None):
+    def get_by_role(self, role, name=None, exact=None, level=None):
         return FakeLocator(self, (role, name))
 
     def locator(self, selector):

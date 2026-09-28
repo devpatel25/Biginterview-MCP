@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from resumeai_mcp.scans import (entry_key, find_new_row, has_extractable_text, jd_sha256, normalize_jd, reuse_key,
+from resumeai_mcp.scans import (displayed_name_matches, entry_key, find_new_row, has_extractable_text, jd_sha256, normalize_jd, reuse_key,
                                 row_state, strip_boilerplate, validate_inputs)
 from resumeai_mcp.schemas import ToolError
 
@@ -101,6 +101,8 @@ def test_row_state_never_maps_unknown_to_failed():
     assert row_state({"status": "success"}) == "complete"
     assert row_state({"status": "failed"}) == "failed"
     assert row_state({"status": "processing"}) == "scanning"
+    assert row_state({"status": "parsing"}) == "scanning"  # observed live
+    assert row_state({"status": "analyzing"}) == "scanning"  # observed live
     assert row_state({"status": "something_new"}) == "unknown"
     assert row_state({}) == "unknown"
 
@@ -169,3 +171,13 @@ def test_docx_text_nodes_not_attributes(tmp_path):
     assert not has_extractable_text(empty)
     full = _docx(tmp_path, "full.docx", '<w:p><w:r><w:t xml:space="preserve">Jane Doe</w:t></w:r></w:p>')
     assert has_extractable_text(full)
+
+
+def test_displayed_filename_check_handles_site_truncation():
+    name = "2026-09-26__Resume_InternDataScientist_OneCommunityGlobalInc.pdf"
+    assert displayed_name_matches("2026-09-26__Resume_InternDataScientis...", name)  # as rendered live
+    assert displayed_name_matches(name, name)
+    assert displayed_name_matches("Resume_Int…", "Resume_Intern.pdf")
+    assert not displayed_name_matches("2026-09-25__Resume_Other...", name)
+    assert not displayed_name_matches("other.pdf", name)
+    assert not displayed_name_matches("...", name)

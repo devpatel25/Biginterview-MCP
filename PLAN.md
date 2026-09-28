@@ -343,8 +343,10 @@ server's stderr log). Tools run one at a time (shared browser page).
 - **Amendment 2026-09-28 (Phase 3, form explored live without scanning):**
   - Landmarks: searchbox "Search for a score guide" → button "Select <guide>" (exact; absent →
     `invalid_input`) → heading "<guide>" + button "Remove" → radio "Add Job Description" → textboxes
-    "Role / Position", "Company Name", "Job Description" → file input → heading "<basename>" (the
-    filename check) → button "Scan Resume". Each missing landmark → `site_changed` + snapshot.
+    "Role / Position", "Company Name", "Job Description" → file input → button "Remove file" + an h3
+    showing the filename (the filename check; **the site shortens long names with a trailing "..."**,
+    so a shortened display must be a prefix of the basename — found in the Phase 5 dry run) → button
+    "Scan Resume". Each missing landmark → `site_changed` + snapshot.
   - The id is captured from My Scans page 1 (up to 60 s): newest row **not listed before the click**
     (ids read at the start of the call), with the same filename (the site stores spaces as underscores)
     and role title, created at/after the click within a 60 s clock-skew allowance (safe only because
@@ -375,8 +377,9 @@ server's stderr log). Tools run one at a time (shared browser page).
   treats `unknown` as "stop and investigate", not as failure.
 - **Amendment 2026-09-28 (Phase 3):** state comes from the My Scans row `status` (page 1; older ids
   from their review_summary page, same field). Observed: `success` → `complete`. Explicit
-  `failed`/`error` → `failed`; `processing`/`scanning` → `scanning`; `pending`/`queued` → `queued`
-  (in-progress values to be confirmed during the first live scan); anything else → `unknown`. An id
+  `failed`/`error` → `failed`; `processing`/`scanning` → `scanning`; `pending`/`queued` → `queued`;
+  anything else → `unknown`. **Confirmed live 2026-09-28 (scan 690156):** `parsing` → `analyzing` →
+  `success` within ~1 minute; `parsing`/`analyzing` map to `scanning`. An id
   neither the site nor the ledger knows → `not_found`; one only the ledger knows → `unknown`. On
   `complete` the ledger entry gets `completed_at` + `medal`.
 - **Amendment 2026-09-28 (user-approved):** success `data` gains `hint: string | null` — set only when
@@ -860,7 +863,7 @@ reports `allowance_restored` truthfully. Tick every box.
 - A6. Single user, single machine (user's Mac), personal use.
 
 **Open questions for the user (do not block Phase 0–2):**
-- Q1. Should `RUNBOOK.md` live in this repo or in the Claude Code agent's own repo?
+- Q1. Should `RUNBOOK.md` live in this repo or in the Claude Code agent's own repo? **Answered 2026-09-28:** this repo (`RUNBOOK.md`, per §5).
 - Q2. Preferred location for `PROFILE_DIR` and `~/.resumeai-mcp/` on the Mac?
 - Q3. For Phase 5's dry run: which role/JD should be the pilot?
 

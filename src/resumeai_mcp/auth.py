@@ -134,8 +134,8 @@ async def site_changed_error(page: Page, settings: Settings, step: str, what: st
     async with site_errors(page, settings):
         path = await snapshot(page, settings, step)
     # Our own ValueError/KeyError texts name the missing landmark/field; pydantic errors echo page values (PII).
-    reason = type(cause).__name__ if isinstance(cause, ValidationError) or cause is None else str(cause)[:120]
-    return ToolError("site_changed", f"{what} not readable ({reason}).",
+    reason = "" if cause is None else f" ({type(cause).__name__ if isinstance(cause, ValidationError) else str(cause)[:120]})"
+    return ToolError("site_changed", f"{what} not readable{reason}.",
                      f"Stop. Inspect snapshot {path.name}; the parser needs a fix.")
 
 
