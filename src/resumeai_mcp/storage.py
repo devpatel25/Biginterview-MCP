@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Settings, private_dir
-from .schemas import ToolError
+from .schemas import ScanFeedback, ToolError
 
 
 def save_snapshot(settings: Settings, name: str, html: str) -> Path:
@@ -42,3 +42,19 @@ def load_ledger(settings: Settings) -> dict[str, dict]:
             "Inspect or repair ledger.jsonl; do not delete scans until it reads cleanly.",
         ) from e
     return entries
+
+
+def backup_feedback(settings: Settings, feedback: ScanFeedback) -> Path:
+    """Write feedback/<scan_id>.json (0600) atomically: temp file + os.replace, so a crash never leaves a
+    truncated backup that delete_scan could later trust (§14)."""
+    try:
+        backup_dir = private_dir(settings.data_dir / "feedback")
+        fd, tmp = tempfile.mkstemp(prefix=f".{feedback.scan_id}-", suffix=".json", dir=backup_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(feedback.model_dump_json(indent=2))
+        path = backup_dir / f"{feedback.scan_id}.json"
+        os.replace(tmp, path)
+    except OSError as e:
+        raise ToolError("storage_error", f"Cannot write feedback backup ({type(e).__name__}).",
+                        "Stop. Fix DATA_DIR permissions/space; never delete a scan without a backup.") from e
+    return path
