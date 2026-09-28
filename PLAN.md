@@ -174,6 +174,8 @@ biginterview-resumeai-mcp/
     ├── test_browser.py           # profile-lock detection, single-launch context init
     ├── test_auth.py              # login_state: redirect / stalled SSO / missing landmark (fake page)
     ├── test_storage.py           # snapshot/dir permissions, unique snapshot names
+    ├── test_scans.py             # list_scans: fixture parse, ledger join, pagination (Phase 1)
+    ├── fixtures/*.fixture.html   # redacted real pages, committed (§16/§17 amendment 2026-09-28)
     └── test_feedback_parser.py   # parser tests against saved HTML fixtures (no live site)
 ```
 
@@ -298,6 +300,9 @@ Error codes are catalogued in §13.
 - **Rule:** hashes are never scraped from the site (they aren't visible there). They are joined in
   from the local ledger by `scan_id`; scans without a ledger entry report null hashes and are
   **never eligible for reuse** (§10).
+- **Amendment 2026-09-28 (Phase 1 finding):** My Scans rows show neither company nor scoring guide.
+  `company` and `scoring_guide` are therefore filled from the ledger entry for MCP-created scans
+  (the site value wins if the site ever provides `scoring_guide`) and are null for site-created scans.
 
 ### 7.3 `start_scan(resume_path, job_title, company, job_description, scoring_guide = "Graduate - STEM Focus")`
 
@@ -478,6 +483,17 @@ snapshot on every failure.
 | Feedback | `VIEW FEEDBACK` → summary: overall medal banner + four category tiles **each with its own badge**; `VIEW DETAILED FEEDBACK` → tabs: Readability / Credibility / ATS Fit / Format; action-items list on the side. |
 | Delete | Per-row delete control in My Scans; confirm dialog if present. Re-read allowance counter after. |
 | Allowance counter | The "N scans remaining / daily limit" indicator near the scan button (exact label may vary — locate by regex `/\d+\s*(scans? )?(remaining|left)/i`). |
+
+**Amendment 2026-09-28 (Phase 1 findings, live read-only visit):**
+- Allowance counter renders as the heading "N scans left today." on the scan page (regex above matches).
+  `account_email` is not rendered on the scan page → null.
+- My Scans lives at `/members/resume_assignments/scans`, 10 rows/page, `?page=N` selects the page
+  server-side. It is a React app whose rows are embedded as JSON in the `data-react-props` attribute
+  of the `[data-react-class="UserResumeAssignmentScansApp"]` element (`parsedResumes.data[]` with
+  `id`, `job_title`, `document_file_name`, `highest_score`, ISO-UTC `created_at`, `status`;
+  `paginationData.count/from`). The rendered row exposes the medal only as a CSS icon class and the
+  date without a timezone, so `list_scans` reads the embedded JSON (a deliberate, approved deviation
+  from the locator preference above). Missing/malformed props → `site_changed` + snapshot.
 
 **Change-detection:** if a landmark from the table above is missing, do not guess — save snapshot,
 return `site_changed` with the missing landmark named. This is how the system degrades instead of
@@ -711,7 +727,7 @@ iterations and because scans may be tidied up.
 | Layer | How | Notes |
 |-------|-----|-------|
 | Schemas & envelope | `test_schemas.py`: valid/invalid payloads, normalization rules, envelope shape | Pure unit, no browser |
-| Parser | `test_feedback_parser.py` on **saved HTML fixtures** | Fixtures captured in Phase 1/2; re-capture when the site changes |
+| Parser | `test_feedback_parser.py` on **saved HTML fixtures** | Fixtures captured in Phase 1/2; re-capture when the site changes. Committed fixtures are redacted copies in `tests/fixtures/*.fixture.html` (amendment 2026-09-28, see §17) |
 | Reuse key & recovery | `test_reuse_key.py`: hash normalization, full-tuple matching, recovery window logic | Pure unit |
 | Browser flows | **No automated live tests** — they need auth + consume real scans | Manual E2E checklist in README instead |
 | MCP contract | `fastmcp` dev-mode smoke test: call each tool, validate envelope + JSON | Run against the live site sparingly (it costs scans) |
@@ -730,6 +746,10 @@ reports `allowance_restored` truthfully. Tick every box.
   needs none.
 - **PII minimization:** the ledger stores hashes + metadata, never resume text. Snapshots contain
   full page HTML (PII) — local only, never committed, purged after 30 days (§14).
+  **Amendment 2026-09-28:** test fixtures derived from snapshots *are* committed, but only as
+  redacted copies in `tests/fixtures/*.fixture.html`: resume text, names, emails, filenames and scan
+  ids removed or replaced; only the elements the parser reads are kept. `.gitignore` re-includes
+  exactly that pattern.
 - **`.gitignore` must include:** the profile dir name, `.env`, snapshot `*.html` files,
   `__pycache__/`, `*.log`. (It cannot protect `~/.resumeai-mcp/` — that's covered by §14's
   explicit permission/retention rules.)
