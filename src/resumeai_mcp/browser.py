@@ -1,9 +1,12 @@
 """Playwright persistent-context lifecycle, human_delay, snapshots (PLAN.md §6, §12)."""
 
 import asyncio
+import functools
+import json
 import os
 import random
 import socket
+from html.parser import HTMLParser
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
@@ -54,6 +57,16 @@ def profile_in_use(profile_dir: Path) -> bool:
 _pw: Playwright | None = None
 _ctx: BrowserContext | None = None
 _init_lock = asyncio.Lock()  # serializes launch: concurrent callers must not start two browsers
+_site_lock = asyncio.Lock()  # one tool at a time: all tools drive the same page (§12: one scan in flight)
+
+
+def site_operation(fn):
+    """Run a site-touching tool exclusively. Inner helpers (read_feedback, …) must not re-acquire it."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        async with _site_lock:
+            return await fn(*args, **kwargs)
+    return wrapper
 
 
 async def ensure_context(settings: Settings, headless: bool | None = None) -> BrowserContext:
@@ -108,3 +121,26 @@ async def human_delay(settings: Settings) -> None:
 
 async def snapshot(page: Page, settings: Settings, name: str) -> Path:
     return storage.save_snapshot(settings, name, await page.content())
+
+
+class _PropsFinder(HTMLParser):
+    def __init__(self, app: str):
+        super().__init__()
+        self.app, self.props = app, None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if self.props is None and a.get("data-react-class") == self.app:
+            self.props = a.get("data-react-props")
+
+
+def react_props(html: str, app: str) -> dict:
+    """The JSON props of the portal's React app `app` (§9 amendment 2026-09-28). ValueError if absent."""
+    finder = _PropsFinder(app)
+    finder.feed(html)
+    if finder.props is None:
+        raise ValueError(f"{app} props not found")
+    props = json.loads(finder.props)
+    if not isinstance(props, dict):
+        raise TypeError(f"{app} props is not an object")
+    return props
