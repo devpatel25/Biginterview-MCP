@@ -55,7 +55,7 @@ def test_silver_leaves_are_warning_and_flagged_under_gold():
     assert flagged["readability"] == [("Spelling & Grammar", "warning")]
     assert ("Keyword Matching", "warning") in flagged["ats_fit"]
     # §8: red flags under a Gold badge still surface as action items, marked as such
-    items = {(a.category, a.item.split(":")[0]): a for a in fb.action_items}
+    items = {(a.category, a.item.split(" (")[0].split(":")[0]): a for a in fb.action_items}
     assert "flagged although the category badge is Gold" in items[("readability", "Spelling & Grammar")].item
     assert len(fb.action_items) == sum(len(v) for v in flagged.values())
     kw = next(c for c in fb.categories.readability.criteria if c.name == "Spelling & Grammar")
@@ -241,3 +241,29 @@ def test_backup_secures_data_dir_root(tmp_path):
         os.umask(old)
     assert stat.S_IMODE(os.stat(data_dir).st_mode) == 0o700
     assert stat.S_IMODE(os.stat(data_dir / "feedback").st_mode) == 0o700
+
+
+def test_no_category_badges_is_site_changed_not_partial():
+    p = _props()
+    p["resumeAiCriteriaScores"]["data"] = []
+    with pytest.raises(ValueError):
+        parse_feedback(_embed(p), "900101")
+
+
+def test_action_item_keeps_the_actual_advice():
+    fb = parse_feedback(_html("gold_bronze"), "900101")
+    job_title = next(a for a in fb.action_items if a.item.startswith("Job Title Match"))
+    assert "Consider using the phrase" in job_title.item
+
+
+def test_snapshot_write_failure_is_storage_error(fake_site, tmp_path):
+    fake_site(_html("gold_bronze"), PORTAL.format("900101"))
+    (tmp_path / "snapshots").write_text("not a directory")  # makes the snapshot write fail with OSError
+    assert _code(_settings(tmp_path), "900101") == "storage_error"
+    assert not (tmp_path / "feedback").exists()  # no backup claimed after a failed snapshot
+
+
+def test_snapshot_failure_on_site_changed_path_is_storage_error(fake_site, tmp_path):
+    fake_site("<html>new layout</html>", PORTAL.format("123"))
+    (tmp_path / "snapshots").write_text("not a directory")
+    assert _code(_settings(tmp_path), "123") == "storage_error"

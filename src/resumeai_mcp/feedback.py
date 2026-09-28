@@ -64,6 +64,9 @@ def parse_feedback(page_html: str, scan_id: str, ledger_entry: dict | None = Non
     rows = [(str(d["relationships"]["resume_ai_criterium"]["data"]["id"]), d["attributes"]) for d in scores["data"]]
     roots = {cid: crit_by_id[cid]["slug"] for cid, _ in rows if crit_by_id[cid]["parent_id"] is None}
     badges = {roots[cid]: _medal(s.get("score_type")) for cid, s in rows if cid in roots}
+    if not any(badges.get(c) for c in CATEGORIES):
+        # §8 partial needs readable summary badges; none at all = the summary landmark itself is missing
+        raise ValueError("no category badges on the summary")
     # The site's per-category Action Items list = the categories' direct children (depth-2 sub-criteria such
     # as Body/Header Font Size roll up into their parent's score).
     children = sorted(
@@ -81,7 +84,7 @@ def parse_feedback(page_html: str, scan_id: str, ledger_entry: dict | None = Non
         if criterion.status != "perfect":  # §8: every flagged item is surfaced, whatever the badge says
             note = " (flagged although the category badge is Gold)" if badges.get(cat) == "gold" else ""
             prio = importance.get(cid)
-            action_items.append(ActionItem(category=cat, item=f"{criterion.name}: {criterion.detail.split('. ')[0]}{note}",
+            action_items.append(ActionItem(category=cat, item=f"{criterion.name}{note}: {criterion.detail}",
                                            priority=prio if prio in PRIORITIES else "medium"))
 
     matched = [k for k in (ai_score.get("resume_keywords") or "").split("#") if k]

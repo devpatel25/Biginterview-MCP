@@ -22,10 +22,14 @@ def save_snapshot(settings: Settings, name: str, html: str) -> Path:
     mkstemp creates the file exclusively with 0600 (contains PII, §6.4) and a unique suffix,
     so same-second snapshots never overwrite each other.
     """
-    snap_dir = data_subdir(settings, "snapshots")
-    fd, path = tempfile.mkstemp(prefix=f"{name}-{datetime.now():%Y%m%dT%H%M%S}-", suffix=".html", dir=snap_dir)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(html)
+    try:
+        snap_dir = data_subdir(settings, "snapshots")
+        fd, path = tempfile.mkstemp(prefix=f"{name}-{datetime.now():%Y%m%dT%H%M%S}-", suffix=".html", dir=snap_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(html)
+    except OSError as e:  # every snapshot (success and site_changed paths) goes through here
+        raise ToolError("storage_error", f"Cannot write HTML snapshot ({type(e).__name__}).",
+                        "Stop. Fix DATA_DIR permissions/space, then retry.") from e
     return Path(path)
 
 
