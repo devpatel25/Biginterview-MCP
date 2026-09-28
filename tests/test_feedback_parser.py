@@ -63,7 +63,7 @@ def test_silver_leaves_are_warning_and_flagged_under_gold():
 
 
 def test_keywords_match_site_lists():
-    ats = parse_feedback(_html("gold_bronze"), "x").categories.ats_fit
+    ats = parse_feedback(_html("gold_bronze"), "900101").categories.ats_fit
     # first entries exactly as the live ATS Fit tab rendered them (site casing, site order)
     assert ats.keywords_matched[:3] == ["automation engineering", "automation", "automation tools"]
     assert ats.keywords_unmatched[:3] == ["automation methodologies", "project planning", "project execution"]
@@ -72,7 +72,7 @@ def test_keywords_match_site_lists():
 
 
 def test_suggestion_from_site_advice_else_null():
-    fb = parse_feedback(_html("gold_bronze"), "x")
+    fb = parse_feedback(_html("gold_bronze"), "900101")
     by_name = {c.name: c for c in fb.categories.credibility.criteria}
     assert by_name["Experience Details"].suggestion.startswith("REDACTED")  # site improvement_advice (redacted)
     assert by_name["GPA"].suggestion is None  # site computes this one client-side
@@ -98,7 +98,7 @@ def test_medal_only_summary_is_partial():
     roots = _root_ids(p)
     sc = p["resumeAiCriteriaScores"]
     sc["data"] = [d for d in sc["data"] if d["relationships"]["resume_ai_criterium"]["data"]["id"] in roots]
-    fb = parse_feedback(_embed(p), "x")
+    fb = parse_feedback(_embed(p), "900101")
     assert fb.partial is True and fb.medal == "gold"
     assert fb.categories.ats_fit.badge == "silver" and fb.categories.ats_fit.criteria == []
     assert fb.action_items == []
@@ -110,7 +110,7 @@ def test_badge_null_edge_case():
     for d in p["resumeAiCriteriaScores"]["data"]:
         if d["relationships"]["resume_ai_criterium"]["data"]["id"] == ats_id:
             d["attributes"]["score_type"] = None
-    assert parse_feedback(_embed(p), "x").categories.ats_fit.badge is None
+    assert parse_feedback(_embed(p), "900101").categories.ats_fit.badge is None
 
 
 def test_unknown_label_is_warning_never_throws():
@@ -118,7 +118,7 @@ def test_unknown_label_is_warning_never_throws():
     d = next(d for d in p["resumeAiCriteriaScores"]["data"]
              if d["relationships"]["resume_ai_criterium"]["data"]["id"] not in _root_ids(p))
     d["attributes"]["score_type"] = "platinum"
-    fb = parse_feedback(_embed(p), "x")
+    fb = parse_feedback(_embed(p), "900101")
     weird = [c for cat in ("readability", "credibility", "ats_fit", "format")
              for c in getattr(fb.categories, cat).criteria if "platinum" in c.detail]
     assert len(weird) == 1 and weird[0].status == "warning"
@@ -128,7 +128,7 @@ def test_incomplete_scan_is_invalid_input():
     p = _props()
     p["parsedResume"]["data"]["attributes"]["status"] = "processing"
     with pytest.raises(ToolError) as e:
-        parse_feedback(_embed(p), "x")
+        parse_feedback(_embed(p), "900101")
     assert e.value.code == "invalid_input"
 
 
@@ -138,9 +138,9 @@ def test_missing_props_raises_value_error():
 
 
 def test_ledger_hash_join():
-    fb = parse_feedback(_html("gold_bronze"), "x", {"resume_sha256": "sha256:abc"})
+    fb = parse_feedback(_html("gold_bronze"), "900101", {"resume_sha256": "sha256:abc"})
     assert fb.resume_sha256 == "sha256:abc"
-    assert parse_feedback(_html("gold_bronze"), "x").resume_sha256 is None
+    assert parse_feedback(_html("gold_bronze"), "900101").resume_sha256 is None
 
 
 # --- get_scan_feedback flow ---------------------------------------------------------------------------------------
@@ -214,3 +214,30 @@ def test_missing_props_is_site_changed(fake_site, tmp_path):
     assert _code(_settings(tmp_path), "123") == "site_changed"
     assert list((tmp_path / "snapshots").glob("123-feedback-*.html"))
     assert not (tmp_path / "feedback").exists()  # nothing backed up from an unreadable page
+
+
+def test_page_for_other_scan_is_rejected():
+    with pytest.raises(ValueError):
+        parse_feedback(_html("gold_bronze"), "900102")
+
+
+@pytest.mark.parametrize("url", [
+    PORTAL.format("1234"),  # prefix of another id
+    "https://portal.test/members/resume_dashboard?next=/members/resume_assignments/review_summary/123",
+])
+def test_lookalike_url_is_not_found(fake_site, tmp_path, url):
+    fake_site(_html("gold_bronze"), url)
+    assert _code(_settings(tmp_path), "123") == "not_found"
+    assert not (tmp_path / "feedback").exists()
+
+
+def test_backup_secures_data_dir_root(tmp_path):
+    from resumeai_mcp.storage import backup_feedback
+    old = os.umask(0o022)
+    try:
+        data_dir = tmp_path / "fresh" / "data"
+        backup_feedback(_settings(data_dir), parse_feedback(_html("gold_bronze"), "900101"))
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(os.stat(data_dir).st_mode) == 0o700
+    assert stat.S_IMODE(os.stat(data_dir / "feedback").st_mode) == 0o700

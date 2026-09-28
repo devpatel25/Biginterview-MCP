@@ -7,6 +7,7 @@ JSON in ResumeAssignmentReviewSummaryApp's data-react-props, so one page load re
 
 import html
 import re
+from urllib.parse import urlparse
 
 from .auth import fetch_page, require_login, site_changed_error, site_errors
 from .browser import new_page, snapshot
@@ -48,6 +49,8 @@ def parse_feedback(page_html: str, scan_id: str, ledger_entry: dict | None = Non
     """review_summary HTML → ScanFeedback. Raises ToolError(invalid_input) for an incomplete scan and
     ValueError/KeyError/TypeError/AttributeError when the page shape changed (caller → site_changed)."""
     props = react_props(page_html, SUMMARY_APP)
+    if str(props["parsedResume"]["data"]["id"]) != scan_id:
+        raise ValueError("page is for a different scan")  # never back up another scan's feedback under this id
     resume = props["parsedResume"]["data"]["attributes"]
     if resume.get("status") != "success":
         raise ToolError("invalid_input", f"Scan {scan_id} is not complete (site status: {resume.get('status')}).",
@@ -122,7 +125,7 @@ async def get_scan_feedback(settings: Settings, scan_id: str) -> ScanFeedback:
     content = await fetch_page(page, settings, SUMMARY_PATH.format(scan_id), step)
     # ponytail: unknown ids assumed to leave the review_summary/<id> URL (redirect/404) — unverified live;
     # confirm with a bogus id once and tighten.
-    if f"/review_summary/{scan_id}" not in page.url:
+    if urlparse(page.url).path.rstrip("/") != SUMMARY_PATH.format(scan_id):
         raise ToolError("not_found", f"Scan {scan_id} not found.", "Re-run list_scans; the id may be a typo or deleted.")
     try:
         feedback = parse_feedback(content, scan_id, ledger.get(scan_id))

@@ -480,6 +480,9 @@ Placeholder values below are unmistakably illustrative and must never be treated
   job keywords not matched case-insensitively. Verified against the rendered ATS Fit lists and the
   keyword-match score on 3 real scans.
 - `partial=true` when the summary JSON yields badges but no criteria.
+- `medal=null` only when the site's score type is not gold/silver/bronze (never guessed; the loop
+  treats it like a null badge: cannot evaluate → stop and report). `priority` falls back to `medium`
+  when the scoring guide gives no importance for a criterion.
 
 ---
 
