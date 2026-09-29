@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="440" viewBox="0 0 900 440" role="img" aria-label="Animated demo: an agent calls auth_status, start_scan, get_scan_status and get_scan_feedback">
+  <defs>
+    <style>
+      .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:15px}
+      .l{opacity:0}
+      .c{fill:#e2e8f0}.k{fill:#7dd3fc}.s{fill:#86efac}.y{fill:#fcd34d}.g{fill:#94a3b8}.p{fill:#f9a8d4}
+      .cur{animation:blink 1s steps(1) infinite}
+      @keyframes blink{50%{opacity:0}}
+    </style>
+  </defs>
+  <rect width="900" height="440" rx="14" fill="#0b1220"/>
+  <rect width="900" height="36" rx="14" fill="#1e293b"/><rect y="22" width="900" height="14" fill="#1e293b"/>
+  <circle cx="22" cy="18" r="6" fill="#f87171"/><circle cx="42" cy="18" r="6" fill="#fbbf24"/><circle cx="62" cy="18" r="6" fill="#34d399"/>
+  <text x="450" y="23" text-anchor="middle" class="m g" font-size="13">claude code — resumeai</text>
+  <g class="m">
+    <text x="24" y="70" class="c">&gt; <tspan class="p">Scan Resume.pdf for "Data Science Co-op" at Acme and summarize.</tspan></text>
+    <text x="24" y="104" class="l" style="animation-name:a1"><tspan class="k">● auth_status</tspan><tspan class="g">()</tspan></text>
+    <text x="44" y="126" class="l" style="animation-name:a1"><tspan class="g">⎿ </tspan><tspan class="s">logged_in: true</tspan><tspan class="g"> · scans_remaining: </tspan><tspan class="y">5</tspan></text>
+    <text x="24" y="160" class="l" style="animation-name:a2"><tspan class="k">● start_scan</tspan><tspan class="g">("/…/Resume.pdf", "Data Science Co-op", "Acme", …)</tspan></text>
+    <text x="44" y="182" class="l" style="animation-name:a2"><tspan class="g">⎿ scan_id: "</tspan><tspan class="y">123456</tspan><tspan class="g">" · state: </tspan><tspan class="c">queued</tspan></text>
+    <text x="24" y="216" class="l" style="animation-name:a3"><tspan class="k">● get_scan_status</tspan><tspan class="g">("123456")  </tspan><tspan class="c">scanning…</tspan><tspan class="g">  (every ≥ 20 s)</tspan></text>
+    <text x="24" y="238" class="l" style="animation-name:a4"><tspan class="k">● get_scan_status</tspan><tspan class="g">("123456")  </tspan><tspan class="s">complete ✓</tspan></text>
+    <text x="24" y="272" class="l" style="animation-name:a5"><tspan class="k">● get_scan_feedback</tspan><tspan class="g">("123456")</tspan></text>
+    <text x="44" y="294" class="l" style="animation-name:a5"><tspan class="g">⎿ medal: </tspan><tspan class="y">gold</tspan></text>
+    <text x="44" y="316" class="l" style="animation-name:a6"><tspan class="g">  readability </tspan><tspan class="y">gold</tspan><tspan class="g"> · credibility </tspan><tspan class="y">gold</tspan><tspan class="g"> · ats_fit </tspan><tspan class="y">gold</tspan><tspan class="g"> · format </tspan><tspan class="y">gold</tspan></text>
+    <text x="44" y="338" class="l" style="animation-name:a6"><tspan class="g">  keywords_matched: </tspan><tspan class="s">28</tspan><tspan class="g"> · unmatched: </tspan><tspan class="c">6 (verification candidates)</tspan></text>
+    <text x="24" y="376" class="l" style="animation-name:a7"><tspan class="s">✔ Target reached: ATS Fit + Credibility Gold.</tspan><tspan class="c"> 2 flagged items reported.</tspan></text>
+    <text x="24" y="410" class="c">&gt; <tspan class="cur">▋</tspan></text>
+  </g>
+  <style>
+    @keyframes a1{0%,6%{opacity:0}7%,94%{opacity:1}95%,100%{opacity:0}}
+    @keyframes a2{0%,18%{opacity:0}19%,94%{opacity:1}95%,100%{opacity:0}}
+    @keyframes a3{0%,30%{opacity:0}31%,94%{opacity:1}95%,100%{opacity:0}}
+    @keyframes a4{0%,42%{opacity:0}43%,94%{opacity:1}95%,100%{opacity:0}}
+    @keyframes a5{0%,54%{opacity:0}55%,94%{opacity:1}95%,100%{opacity:0}}
+    @keyframes a6{0%,64%{opacity:0}65%,94%{opacity:1}95%,100%{opacity:0}}
+    @keyframes a7{0%,74%{opacity:0}75%,94%{opacity:1}95%,100%{opacity:0}}
+    .l{animation-duration:16s;animation-iteration-count:infinite;animation-timing-function:steps(1)}
+  </style>
+</svg>

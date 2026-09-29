@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-label="resumeai-mcp: Big Interview ResumeAI for your AI agent">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fde68a"/><stop offset=".5" stop-color="#f59e0b"/><stop offset="1" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="medal"><circle cx="980" cy="160" r="86"/></clipPath>
+    <style>
+      .t{font-family:ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+      .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .float{animation:float 4s ease-in-out infinite}
+      .sweep{animation:sweep 3.2s ease-in-out infinite}
+      .pulse{animation:pulse 2.4s ease-in-out infinite}
+      .d1{animation-delay:.3s}.d2{animation-delay:.6s}.d3{animation-delay:.9s}
+      @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+      @keyframes sweep{0%{transform:translateX(-260px)}60%,100%{transform:translateX(260px)}}
+      @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+    </style>
+  </defs>
+  <rect width="1200" height="320" rx="24" fill="url(#bg)"/>
+  <g opacity=".08" stroke="#fff"><path d="M0 80H1200M0 160H1200M0 240H1200M200 0V320M400 0V320M600 0V320M800 0V320M1000 0V320"/></g>
+
+  <text x="72" y="130" class="t" font-size="64" font-weight="800" fill="#f8fafc">resumeai<tspan fill="#f59e0b">-mcp</tspan></text>
+  <text x="74" y="178" class="t" font-size="24" fill="#cbd5e1">Big Interview ResumeAI, driven by your AI agent.</text>
+  <text x="74" y="212" class="t" font-size="18" fill="#94a3b8">Scan · poll · structured feedback · tailor → rescan until Gold</text>
+  <g class="m" font-size="15">
+    <rect x="72" y="238" width="118" height="30" rx="15" fill="#1e293b" stroke="#334155"/><text x="131" y="258" text-anchor="middle" fill="#a5b4fc">MCP · stdio</text>
+    <rect x="200" y="238" width="118" height="30" rx="15" fill="#1e293b" stroke="#334155"/><text x="259" y="258" text-anchor="middle" fill="#86efac">Playwright</text>
+    <rect x="328" y="238" width="118" height="30" rx="15" fill="#1e293b" stroke="#334155"/><text x="387" y="258" text-anchor="middle" fill="#fcd34d">6 tools</text>
+    <rect x="456" y="238" width="150" height="30" rx="15" fill="#1e293b" stroke="#334155"/><text x="531" y="258" text-anchor="middle" fill="#f9a8d4">no passwords</text>
+  </g>
+
+  <g class="float">
+    <path d="M940 40 L960 90 L1000 90 L1020 40 Z" fill="#6366f1"/>
+    <path d="M940 40 L955 40 L975 90 L960 90 Z" fill="#818cf8"/>
+    <circle cx="980" cy="160" r="86" fill="url(#gold)"/>
+    <circle cx="980" cy="160" r="70" fill="none" stroke="#fef3c7" stroke-opacity=".6" stroke-width="3"/>
+    <g clip-path="url(#medal)"><rect class="sweep" x="880" y="60" width="90" height="200" fill="url(#shine)" transform="skewX(-15)"/></g>
+    <text x="980" y="150" text-anchor="middle" class="t" font-size="22" font-weight="800" fill="#78350f">GOLD</text>
+    <text x="980" y="178" text-anchor="middle" class="t" font-size="14" font-weight="600" fill="#78350f">ATS Fit · Credibility</text>
+  </g>
+  <g fill="#fde68a">
+    <circle class="pulse" cx="860" cy="70" r="4"/><circle class="pulse d1" cx="1100" cy="95" r="3"/>
+    <circle class="pulse d2" cx="1090" cy="250" r="4"/><circle class="pulse d3" cx="870" cy="260" r="3"/>
+  </g>
+</svg>
